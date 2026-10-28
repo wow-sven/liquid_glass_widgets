@@ -2,6 +2,8 @@
 
 ## Bug Fixes
 
+- Preserve distinct top and bottom corner radii for standard-quality rounded rectangle glass, preventing inset sheet corners from exposing the surface underneath.
+
 - Keep the searchable tab bar's trailing edge anchored when its parent changes width during a search morph. The existing native springs now animate the trailing inset and width, preventing a temporary sideways jump; extra buttons continue to follow the search pill.
 
 # 1.14.2
