@@ -627,8 +627,7 @@ class TabIndicatorState extends State<TabIndicator>
                 // On cancel (e.g. parent scroll steals the gesture or pointer goes
                 // off-screen), tabIsDown is cleared by the Listener when pointer lifts.
                 onHorizontalDragCancel: onBarDragCancel,
-                onTapDown:
-                    onBarTapDown, // DX1: makes jelly visible on desktop taps
+                onTapDown: onBarTapDown,
                 onTapUp: onBarTapUp,
                 onTapCancel: onBarTapCancel,
                 child: VelocitySpringBuilder(
@@ -650,18 +649,8 @@ class TabIndicatorState extends State<TabIndicator>
                       spring: GlassSpring.snappy(
                         duration: const Duration(milliseconds: 300),
                       ),
-                      // Keep thickness active while:
-                      //  - tabIsDown (tap pressed, 420 ms window for spring travel), OR
-                      //  - tabIsDragging (finger is physically moving — keep glass alive
-                      //    even when passing back over the selected tab), OR
-                      //  - the spring still has meaningful separation from target.
-                      // Threshold 0.05 (was 0.10) catches the full deceleration tail.
-                      value: widget.visible &&
-                              (tabIsDown ||
-                                  tabIsDragging ||
-                                  (value - targetAlignment).abs() > 0.05)
-                          ? 1.0
-                          : 0.0,
+                      // Taps slide the resting pill. Only a drag lifts it.
+                      value: widget.visible && tabIsDragging ? 1.0 : 0.0,
                       builder: (context, thickness, child) {
                         // Lazy evaluation optimization: skip expensive calculations when hidden
                         if (thickness < 0.01 &&
@@ -687,9 +676,10 @@ class TabIndicatorState extends State<TabIndicator>
                         }
 
                         // Calculate jelly transform for the clipper (only when needed)
+                        final dragVelocity = thickness > 0.01 ? velocity : 0.0;
                         final jellyTransform =
                             DraggableIndicatorPhysics.buildJellyTransform(
-                          velocity: Offset(velocity, 0),
+                          velocity: Offset(dragVelocity, 0),
                           maxDistortion: 0.8,
                           velocityScale: 10,
                         );
@@ -703,7 +693,7 @@ class TabIndicatorState extends State<TabIndicator>
                               // targetAlignment is a physical x-value.
                               targetAlignment: Alignment(targetAlignment, 0),
                               thickness: thickness,
-                              velocity: velocity,
+                              velocity: dragVelocity,
                               indicatorRadius: indicatorRadius,
                               indicatorColor: indicatorColor,
                             );
@@ -712,7 +702,7 @@ class TabIndicatorState extends State<TabIndicator>
                             return _buildHighQualityMode(
                               alignment: alignment,
                               thickness: thickness,
-                              velocity: velocity,
+                              velocity: dragVelocity,
                               jellyTransform: jellyTransform,
                               indicatorRadius: indicatorRadius,
                               indicatorColor: indicatorColor,

@@ -382,12 +382,8 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                       spring: GlassSpring.snappy(
                         duration: const Duration(milliseconds: 300),
                       ),
-                      value: widget.visible &&
-                              (tabIsDown ||
-                                  tabIsDragging ||
-                                  (alignment.x - targetAlignment).abs() > 0.05)
-                          ? 1.0
-                          : 0.0,
+                      // Taps slide the resting pill. Only a drag lifts it.
+                      value: widget.visible && tabIsDragging ? 1.0 : 0.0,
                       builder: (context, thickness, _) {
                         if (thickness < 0.01 &&
                             !widget.visible &&
@@ -408,9 +404,10 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                           );
                         }
 
+                        final dragVelocity = thickness > 0.01 ? velocity : 0.0;
                         final jellyTransform =
                             DraggableIndicatorPhysics.buildJellyTransform(
-                          velocity: Offset(velocity, 0),
+                          velocity: Offset(dragVelocity, 0),
                           maxDistortion: 0.8,
                           velocityScale: 10,
                         );
@@ -421,7 +418,7 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                               alignment: alignment,
                               targetAlignment: Alignment(targetAlignment, 0),
                               thickness: thickness,
-                              velocity: velocity,
+                              velocity: dragVelocity,
                               indicatorRadius: indicatorRadius,
                               indicatorColor: indicatorColor,
                             );
@@ -429,7 +426,7 @@ class SearchableTabIndicatorState extends State<SearchableTabIndicator>
                             return _buildHighQuality(
                               alignment: alignment,
                               thickness: thickness,
-                              velocity: velocity,
+                              velocity: dragVelocity,
                               jellyTransform: jellyTransform,
                               indicatorRadius: indicatorRadius,
                               indicatorColor: indicatorColor,
