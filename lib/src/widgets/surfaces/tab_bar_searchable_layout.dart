@@ -1157,6 +1157,12 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
           accessoryH;
 
       final innerBarContent = barContent;
+      // The inner bar lifts its search and dismiss pills above the keyboard.
+      // Include that lift in every ancestor's hit-test bounds, not just the
+      // inner bar: Clip.none permits painting outside a Stack, not tapping it.
+      final keyboardLift = _controller.searchFocused
+          ? MediaQuery.viewInsetsOf(context).bottom
+          : 0.0;
 
       // Must resolve identically to GlassTabBar.preferredSize's call, or the
       // scaffold reserves a height this engine does not draw.
@@ -1206,7 +1212,7 @@ class _TabBarSearchableLayoutState extends State<TabBarSearchableLayout>
             )!;
 
             return SizedBox(
-              height: height,
+              height: height + keyboardLift,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [

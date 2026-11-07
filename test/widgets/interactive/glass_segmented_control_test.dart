@@ -727,9 +727,10 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Press down to trigger active indicator lens bloom (thickness > 0.01)
+        // Drag past touch slop to trigger the active indicator lens.
         final gesture =
             await tester.startGesture(tester.getCenter(find.text('Day')));
+        await gesture.moveBy(const Offset(40, 0));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 
@@ -765,9 +766,10 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        // Press down to trigger active indicator lens bloom (thickness > 0.01)
+        // Drag past touch slop to trigger the active indicator lens.
         final gesture =
             await tester.startGesture(tester.getCenter(find.text('Day')));
+        await gesture.moveBy(const Offset(40, 0));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
 

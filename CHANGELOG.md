@@ -4,7 +4,13 @@
 
 - Horizontal tab bar indicators now slide at their resting size on selection. Dragging still lifts the glass indicator.
 
+- Fixed-width segmented controls now slide their resting selection pill on taps, keyboard activation and external selection changes; the enlarged refractive lens appears only during an accepted drag and settles on release or cancellation.
+
 - Preserve distinct top and bottom corner radii for standard-quality rounded rectangle glass, preventing inset sheet corners from exposing the surface underneath.
+
+- Preserve the search text field and keyboard connection while the icon expands into an input pill, including reversals across the compact-width threshold.
+
+- Keep expanded search and its close button tappable above the keyboard when a bottom accessory is mounted. The accessory wrapper now includes the keyboard lift in its hit-test bounds.
 
 - Keep the searchable tab bar's trailing edge anchored when its parent changes width during a search morph. The existing native springs now animate the trailing inset and width, preventing a temporary sideways jump; extra buttons continue to follow the search pill.
 

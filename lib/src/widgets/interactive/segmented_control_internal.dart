@@ -98,7 +98,6 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
   // Colours are resolved dynamically in build() based on CupertinoTheme
 
   // ── Gesture state ─────────────────────────────────────────────────────────
-  bool _isDown = false;
   bool _isDragging = false;
 
   /// Current main-axis alignment of the indicator in the range [-1, 1].
@@ -178,8 +177,8 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
 
   // ── Gesture handlers ──────────────────────────────────────────────────────
 
-  void _onDragDown(DragDownDetails details) {
-    setState(() => _isDown = true);
+  void _onDragStart(DragStartDetails details) {
+    setState(() => _isDragging = true);
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
@@ -194,7 +193,6 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
   void _onDragEnd(DragEndDetails details) {
     setState(() {
       _isDragging = false;
-      _isDown = false;
     });
 
     final box = context.findRenderObject()! as RenderBox;
@@ -234,7 +232,6 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
       );
       setState(() {
         _isDragging = false;
-        _isDown = false;
         _mainAlign = _computeAlignmentForSegment(targetSegmentIndex);
       });
       if (targetSegmentIndex != widget.selectedIndex) {
@@ -262,7 +259,6 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
         (GlassTheme.brightnessOf(context) == Brightness.light
             ? CupertinoColors.black.withValues(alpha: 0.08)
             : CupertinoColors.white.withValues(alpha: 0.2));
-    final targetAlignment = _computeAlignmentForSegment(widget.selectedIndex);
 
     // Indicator is slightly less rounded than the container to account for
     // the inset padding (2 px), unless explicitly overridden.
@@ -290,66 +286,76 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
       color: dynamicLabelColor.withValues(alpha: 0.6),
     ).merge(widget.unselectedTextStyle);
 
-    return Listener(
-      // Raw pointer events fire BEFORE gesture recognizers and never compete
-      // in the gesture arena, so _isDown is always set on the very first event.
-      onPointerDown: (_) => setState(() => _isDown = true),
-      // On finger/button lift, clear _isDown if not mid-drag.
-      onPointerUp: (_) {
-        if (!_isDragging) setState(() => _isDown = false);
-      },
-      onPointerCancel: (_) {
-        if (!_isDragging) setState(() => _isDown = false);
-      },
-      child: GestureDetector(
-        excludeFromSemantics: true,
-        onHorizontalDragDown:
-            widget.direction == Axis.horizontal ? _onDragDown : null,
-        onHorizontalDragUpdate:
-            widget.direction == Axis.horizontal ? _onDragUpdate : null,
-        onHorizontalDragEnd:
-            widget.direction == Axis.horizontal ? _onDragEnd : null,
-        onHorizontalDragCancel:
-            widget.direction == Axis.horizontal ? _onDragCancel : null,
-        onVerticalDragDown:
-            widget.direction == Axis.vertical ? _onDragDown : null,
-        onVerticalDragUpdate:
-            widget.direction == Axis.vertical ? _onDragUpdate : null,
-        onVerticalDragEnd:
-            widget.direction == Axis.vertical ? _onDragEnd : null,
-        onVerticalDragCancel:
-            widget.direction == Axis.vertical ? _onDragCancel : null,
-        child: VelocitySpringBuilder(
-          value: _mainAlign,
-          springWhenActive: GlassSpring.interactive(),
-          springWhenReleased: GlassSpring.snappy(
-            duration: const Duration(milliseconds: 350),
-          ),
-          active: _isDragging,
-          builder: (context, value, velocity, child) {
-            final alignment = widget.direction == Axis.horizontal
-                ? AlignmentDirectional(value, 0)
-                : Alignment(0, value);
-            final alignmentDelta = value - targetAlignment;
+    return GestureDetector(
+      excludeFromSemantics: true,
+      onHorizontalDragStart:
+          widget.direction == Axis.horizontal ? _onDragStart : null,
+      onHorizontalDragUpdate:
+          widget.direction == Axis.horizontal ? _onDragUpdate : null,
+      onHorizontalDragEnd:
+          widget.direction == Axis.horizontal ? _onDragEnd : null,
+      onHorizontalDragCancel:
+          widget.direction == Axis.horizontal ? _onDragCancel : null,
+      onVerticalDragStart:
+          widget.direction == Axis.vertical ? _onDragStart : null,
+      onVerticalDragUpdate:
+          widget.direction == Axis.vertical ? _onDragUpdate : null,
+      onVerticalDragEnd: widget.direction == Axis.vertical ? _onDragEnd : null,
+      onVerticalDragCancel:
+          widget.direction == Axis.vertical ? _onDragCancel : null,
+      child: VelocitySpringBuilder(
+        value: _mainAlign,
+        springWhenActive: GlassSpring.interactive(),
+        springWhenReleased: GlassSpring.snappy(
+          duration: const Duration(milliseconds: 350),
+        ),
+        active: _isDragging,
+        builder: (context, value, velocity, child) {
+          final alignment = widget.direction == Axis.horizontal
+              ? AlignmentDirectional(value, 0)
+              : Alignment(0, value);
 
-            return SpringBuilder(
-              spring: GlassSpring.snappy(
-                duration: const Duration(milliseconds: 300),
-              ),
-              // Show glass bloom when: pressed, dragging, OR indicator is still
-              // settling toward its target. Threshold 0.05 matches
-              // tab_bar_internal.dart for consistent cross-component behaviour.
-              value: _isDown || alignmentDelta.abs() > 0.05 ? 1.0 : 0.0,
-              builder: (context, thickness, child) {
-                final isPremiumQuality = widget.quality == GlassQuality.premium;
-                return Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Pass 1 — solid background pill, always below labels.
-                    // For non-premium quality the glass effect is also included
-                    // here (single-pass, cheaper path).
+          return SpringBuilder(
+            spring: GlassSpring.snappy(
+              duration: const Duration(milliseconds: 300),
+            ),
+            // Only an accepted drag lifts the indicator. Taps, keyboard
+            // selection and external value changes slide the resting pill.
+            value: _isDragging ? 1.0 : 0.0,
+            builder: (context, thickness, child) {
+              final isPremiumQuality = widget.quality == GlassQuality.premium;
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Pass 1 — solid background pill, always below labels.
+                  // For non-premium quality the glass effect is also included
+                  // here (single-pass, cheaper path).
+                  AnimatedGlassIndicator(
+                    velocity: thickness > 0.01 ? velocity : 0,
+                    itemCount: widget.segments.length,
+                    alignment: alignment,
+                    direction: widget.direction,
+                    thickness: thickness,
+                    quality: widget.quality,
+                    indicatorColor: indicatorColor,
+                    isBackgroundIndicator: false,
+                    borderRadius: indicatorRadius,
+                    paintBackground: true,
+                    paintGlass: !isPremiumQuality,
+                    settings: widget.indicatorSettings,
+                    pinchStrength: widget.indicatorPinchStrength,
+                    expansion: widget.indicatorExpansion,
+                    backgroundKey: widget.backgroundKey,
+                  ),
+                  // Segment labels paint between the two indicator passes so
+                  // the premium glass layer above can refract them.
+                  child!,
+                  // Pass 2 (premium only) — glass-only pass rendered ABOVE
+                  // the labels so the shader samples and refracts them,
+                  // matching the iOS 26 refraction seen in GlassTabBar.
+                  if (isPremiumQuality)
                     AnimatedGlassIndicator(
-                      velocity: velocity,
+                      velocity: thickness > 0.01 ? velocity : 0,
                       itemCount: widget.segments.length,
                       alignment: alignment,
                       direction: widget.direction,
@@ -358,81 +364,56 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
                       indicatorColor: indicatorColor,
                       isBackgroundIndicator: false,
                       borderRadius: indicatorRadius,
-                      paintBackground: true,
-                      paintGlass: !isPremiumQuality,
+                      paintBackground: false,
+                      paintGlass: true,
                       settings: widget.indicatorSettings,
                       pinchStrength: widget.indicatorPinchStrength,
                       expansion: widget.indicatorExpansion,
                       backgroundKey: widget.backgroundKey,
                     ),
-                    // Segment labels paint between the two indicator passes so
-                    // the premium glass layer above can refract them.
-                    child!,
-                    // Pass 2 (premium only) — glass-only pass rendered ABOVE
-                    // the labels so the shader samples and refracts them,
-                    // matching the iOS 26 refraction seen in GlassTabBar.
-                    if (isPremiumQuality)
-                      AnimatedGlassIndicator(
-                        velocity: velocity,
-                        itemCount: widget.segments.length,
-                        alignment: alignment,
-                        direction: widget.direction,
-                        thickness: thickness,
-                        quality: widget.quality,
-                        indicatorColor: indicatorColor,
-                        isBackgroundIndicator: false,
-                        borderRadius: indicatorRadius,
-                        paintBackground: false,
-                        paintGlass: true,
-                        settings: widget.indicatorSettings,
-                        pinchStrength: widget.indicatorPinchStrength,
-                        expansion: widget.indicatorExpansion,
-                        backgroundKey: widget.backgroundKey,
-                      ),
-                  ],
-                );
-              },
-              child: Flex(
-                direction: widget.direction,
-                children: [
-                  for (var i = 0; i < widget.segments.length; i++)
-                    Expanded(
-                      child: RepaintBoundary(
-                        child: GestureDetector(
-                          excludeFromSemantics: true,
-                          onTap: () => _onSegmentTap(i),
-                          onTapDown: (_) {
-                            if (!widget.segments[i].enabled) return;
-                            if (i != widget.selectedIndex) {
-                              widget.onSegmentSelected(i);
-                            }
-                          },
-                          behavior: HitTestBehavior.opaque,
-                          child: GlassFocusRegion(
-                            enabled: widget.segments[i].enabled,
-                            isButton: true,
-                            tracksSelection: true,
-                            isSelected: widget.selectedIndex == i,
-                            semanticLabel: widget.segments[i].semanticLabel ??
-                                widget.segments[i].label,
-                            onKeyboardActivate: () => _onSegmentTap(i),
-                            semanticOnTap: () => _onSegmentTap(i),
-                            isFocusedNotifier: _focusNotifiers[i],
-                            isHoveredNotifier: _hoverNotifiers[i],
-                            shape:
-                                const LiquidRoundedRectangle(borderRadius: 8.0),
-                            child: Center(
-                              child: IgnorePointer(
-                                ignoring: !widget.segments[i].enabled,
-                                child: Opacity(
-                                  opacity:
-                                      widget.segments[i].enabled ? 1.0 : 0.38,
-                                  child: _buildSegmentContent(
-                                    widget.segments[i],
-                                    isSelected: widget.selectedIndex == i,
-                                    selectedStyle: selectedTextStyle,
-                                    unselectedStyle: unselectedTextStyle,
-                                  ),
+                ],
+              );
+            },
+            child: Flex(
+              direction: widget.direction,
+              children: [
+                for (var i = 0; i < widget.segments.length; i++)
+                  Expanded(
+                    child: RepaintBoundary(
+                      child: GestureDetector(
+                        excludeFromSemantics: true,
+                        onTap: () => _onSegmentTap(i),
+                        onTapDown: (_) {
+                          if (!widget.segments[i].enabled) return;
+                          if (i != widget.selectedIndex) {
+                            widget.onSegmentSelected(i);
+                          }
+                        },
+                        behavior: HitTestBehavior.opaque,
+                        child: GlassFocusRegion(
+                          enabled: widget.segments[i].enabled,
+                          isButton: true,
+                          tracksSelection: true,
+                          isSelected: widget.selectedIndex == i,
+                          semanticLabel: widget.segments[i].semanticLabel ??
+                              widget.segments[i].label,
+                          onKeyboardActivate: () => _onSegmentTap(i),
+                          semanticOnTap: () => _onSegmentTap(i),
+                          isFocusedNotifier: _focusNotifiers[i],
+                          isHoveredNotifier: _hoverNotifiers[i],
+                          shape:
+                              const LiquidRoundedRectangle(borderRadius: 8.0),
+                          child: Center(
+                            child: IgnorePointer(
+                              ignoring: !widget.segments[i].enabled,
+                              child: Opacity(
+                                opacity:
+                                    widget.segments[i].enabled ? 1.0 : 0.38,
+                                child: _buildSegmentContent(
+                                  widget.segments[i],
+                                  isSelected: widget.selectedIndex == i,
+                                  selectedStyle: selectedTextStyle,
+                                  unselectedStyle: unselectedTextStyle,
                                 ),
                               ),
                             ),
@@ -440,23 +421,23 @@ class SegmentedControlContentState extends State<SegmentedControlContent> {
                         ),
                       ),
                     ),
-                ],
-              ),
-            );
-          },
-          child: Flex(
-            direction: widget.direction,
-            children: [
-              for (var i = 0; i < widget.segments.length; i++)
-                Expanded(
-                  child: Center(
-                    child: widget.segments[i].label != null
-                        ? Text(widget.segments[i].label!)
-                        : (widget.segments[i].icon ?? const SizedBox.shrink()),
                   ),
+              ],
+            ),
+          );
+        },
+        child: Flex(
+          direction: widget.direction,
+          children: [
+            for (var i = 0; i < widget.segments.length; i++)
+              Expanded(
+                child: Center(
+                  child: widget.segments[i].label != null
+                      ? Text(widget.segments[i].label!)
+                      : (widget.segments[i].icon ?? const SizedBox.shrink()),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
