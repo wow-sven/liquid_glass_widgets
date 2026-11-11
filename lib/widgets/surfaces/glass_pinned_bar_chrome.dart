@@ -32,6 +32,7 @@ class GlassPinnedBarChromeData {
     required this.leading,
     required this.actions,
     required this.hoisted,
+    this.title,
     this.presenting,
     this.inStrip = false,
   });
@@ -71,6 +72,9 @@ class GlassPinnedBarChromeData {
   /// [leading] and [actions] already account for all of this — read it only to
   /// substitute your own chrome for the package's.
   final bool hoisted;
+
+  /// The declared title, or an unpainted placeholder when the shell owns it.
+  final Widget? title;
 
   /// The [GlassBarItem.sheet] whose sheet is up out of the hoisted chrome, or
   /// null.
@@ -180,6 +184,11 @@ class GlassPinnedBarChrome extends StatefulWidget {
     this.platformViewBackdrop = false,
     this.largeTitleController,
     this.stripRowTop,
+    this.title,
+    this.titleContentKey,
+    this.itemMatching = GlassBarItemMatching.identity,
+    this.contentTransition = GlassBarContentTransition.gel,
+    this.routeDrivenTransitions = false,
     this.enabled = true,
   })  : assert(buttonSize == null || buttonSize > 0),
         assert(toolbarHeight == null || toolbarHeight >= 0);
@@ -280,6 +289,23 @@ class GlassPinnedBarChrome extends StatefulWidget {
   /// it, and the hand-over between the two is invisible. Elsewhere it is not
   /// read.
   final double? stripRowTop;
+
+  /// Optional compact title hoisted with the horizontal navigation chrome.
+  /// Use the resolved title slot in the bar builder to avoid drawing it twice.
+  final Widget? title;
+
+  /// Visible title identity. Equal non-null values retain the title unchanged.
+  final Object? titleContentKey;
+
+  /// Matching policy for presentation slots across different routes.
+  final GlassBarItemMatching itemMatching;
+
+  /// Foreground replacement policy, separate from glass splitting and merging.
+  final GlassBarContentTransition contentTransition;
+
+  /// Follow the route's exact progress in both directions, including cancelled
+  /// back gestures. Disables the native gesture hold and independently timed gel.
+  final bool routeDrivenTransitions;
 
   /// Whether this bar participates in pinning at all.
   ///
@@ -418,6 +444,22 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
         platformViewBackdrop: widget.platformViewBackdrop,
         largeTitleController: widget.largeTitleController,
         stripRowTop: widget.stripRowTop,
+        title: widget.title == null
+            ? null
+            : InheritedTheme.captureAll(
+                context,
+                MediaQuery(
+                  data: MediaQuery.of(context),
+                  child: Directionality(
+                    textDirection: Directionality.of(context),
+                    child: widget.title!,
+                  ),
+                ),
+              ),
+        titleContentKey: widget.titleContentKey,
+        itemMatching: widget.itemMatching,
+        contentTransition: widget.contentTransition,
+        routeDrivenTransitions: widget.routeDrivenTransitions,
       ),
     );
   }
@@ -861,6 +903,15 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
         leading: verticalBar == null ? _buildLeading(context) : null,
         actions: verticalBar == null ? _buildActions() : _buildRowActions(),
         hoisted: _handedOver,
+        title: widget.title == null
+            ? null
+            : Visibility(
+                visible: !_handedOver || verticalBar != null,
+                maintainSize: true,
+                maintainState: true,
+                maintainAnimation: true,
+                child: widget.title!,
+              ),
         presenting: _presenting,
         inStrip: verticalBar != null,
       ),

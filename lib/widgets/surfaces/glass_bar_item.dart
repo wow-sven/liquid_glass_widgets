@@ -5,6 +5,24 @@ import '../overlays/glass_modal_sheet.dart';
 import 'glass_navigation_shell.dart';
 import 'glass_vertical_bar.dart';
 
+/// How unrelated routes pair their bar items and glass groups.
+enum GlassBarItemMatching {
+  /// Prefer business identifiers, then fall back to position for anonymous items.
+  identity,
+
+  /// Retain presentation slots from the anchored edge, regardless of business ID.
+  position,
+}
+
+/// How a retained bar item changes its foreground content.
+enum GlassBarContentTransition {
+  /// Native gel swell and glyph blur, including content-only changes.
+  gel,
+
+  /// Cross-fade content and adapt width; reserve gel for structural changes.
+  crossFade,
+}
+
 /// How an item's glass background is drawn.
 ///
 /// Mirrors the two booleans iOS 26 added to `UIBarButtonItem`:
@@ -109,6 +127,7 @@ sealed class GlassBarItem {
     required Widget icon,
     required VoidCallback onTap,
     Object? id,
+    Object? contentKey,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -139,6 +158,7 @@ sealed class GlassBarItem {
     required Widget child,
     VoidCallback? onTap,
     Object? id,
+    Object? contentKey,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -164,6 +184,7 @@ sealed class GlassBarItem {
     double menuWidth,
     double? menuHeight,
     Object? id,
+    Object? contentKey,
     String? label,
     GlassBarItemBackground background,
     Color? tintColor,
@@ -200,6 +221,7 @@ sealed class GlassBarItem {
     required Widget icon,
     required void Function(GlassMorphAnchor? anchor) onPresent,
     Object? id,
+    Object? contentKey,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -226,6 +248,7 @@ sealed class GlassBarActionItem extends GlassBarItem {
   const GlassBarActionItem({
     required this.onTap,
     this.id,
+    this.contentKey,
     this.label,
     this.enabled = true,
     this.background = GlassBarItemBackground.shared,
@@ -250,6 +273,11 @@ sealed class GlassBarActionItem extends GlassBarItem {
   ///
   /// See [GlassBarItem.icon] for the matching rules.
   final Object? id;
+
+  /// Value identity of the visible foreground, independent of the business ID
+  /// and callback. Equal non-null keys suppress redundant content transitions.
+  /// Include every property affecting the foreground; omit for arbitrary views.
+  final Object? contentKey;
 
   /// Optional semantic label.
   ///
@@ -318,6 +346,7 @@ final class GlassBarIconItem extends GlassBarActionItem {
     required this.icon,
     required super.onTap,
     super.id,
+    super.contentKey,
     super.label,
     super.enabled,
     super.background,
@@ -343,6 +372,7 @@ final class GlassBarCustomItem extends GlassBarActionItem {
     required this.child,
     VoidCallback? onTap,
     super.id,
+    super.contentKey,
     super.label,
     super.enabled,
     super.background,
@@ -369,6 +399,7 @@ final class GlassBarMenuItem extends GlassBarActionItem {
     this.menuWidth = 200,
     this.menuHeight,
     super.id,
+    super.contentKey,
     super.label,
     super.background,
     super.tintColor,
@@ -407,6 +438,7 @@ final class GlassBarSheetItem extends GlassBarActionItem {
     required this.icon,
     required this.onPresent,
     super.id,
+    super.contentKey,
     super.label,
     super.enabled,
     super.background,

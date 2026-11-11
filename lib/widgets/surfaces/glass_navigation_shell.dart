@@ -36,6 +36,11 @@ class GlassNavBarRegistration {
     this.platformViewBackdrop = false,
     this.largeTitleController,
     this.stripRowTop,
+    this.title,
+    this.titleContentKey,
+    this.itemMatching = GlassBarItemMatching.identity,
+    this.contentTransition = GlassBarContentTransition.gel,
+    this.routeDrivenTransitions = false,
   })  : assert(
           buttonSize == null || buttonSize > 0,
           'buttonSize must be positive',
@@ -114,6 +119,23 @@ class GlassNavBarRegistration {
   /// of that header's row, so the items land in it rather than above it.
   /// Elsewhere it is not read.
   final double? stripRowTop;
+
+  /// Optional compact title hoisted with the horizontal navigation chrome.
+  /// Use the resolved title slot in the bar builder to avoid drawing it twice.
+  final Widget? title;
+
+  /// Visible title identity. Equal non-null values retain the title unchanged.
+  final Object? titleContentKey;
+
+  /// Matching policy for presentation slots across different routes.
+  final GlassBarItemMatching itemMatching;
+
+  /// Foreground replacement policy, separate from glass splitting and merging.
+  final GlassBarContentTransition contentTransition;
+
+  /// Follow the route's exact progress in both directions, including cancelled
+  /// back gestures. Disables the native gesture hold and independently timed gel.
+  final bool routeDrivenTransitions;
 
   /// Whether the pinned chrome floats over a native platform view.
   ///
@@ -483,6 +505,7 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
         status != AnimationStatus.reverse) {
       return;
     }
+    if (_registry[route]?.routeDrivenTransitions ?? false) return;
     if (route.navigator?.userGestureInProgress ?? false) return;
     if (identical(_clockRoute, route) && _clockStatus == status) return;
     // Only a route on a simulation needs the clock; `createSimulation` is
@@ -907,7 +930,9 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     // got there first; the chrome is not settled until it has.
     final running =
         status == AnimationStatus.forward || status == AnimationStatus.reverse;
-    final clocked = identical(_clockRoute, top.key) &&
+    final routeDriven = top.value.routeDrivenTransitions;
+    final clocked = !routeDriven &&
+        identical(_clockRoute, top.key) &&
         !userGesture &&
         (running || _clockPending || _clock.isAnimating);
     if (clocked) progress = _clockProgress();
@@ -941,7 +966,8 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     // The held value has to be read before [_holdForGesture] runs, because
     // releasing clears it — and the held value is exactly where the chrome
     // must start from, not the live progress the drag happened to reach.
-    final committing = _gestureActive && !gesturing && !top.key.isActive;
+    final committing =
+        !routeDriven && _gestureActive && !gesturing && !top.key.isActive;
     final heldAtCommit = _gestureHeldProgress ?? progress;
 
     // A pop plays the same forward choreography toward the other target, not
@@ -949,7 +975,8 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     // The gesture flag matters as much as the status: a back-swipe holds the
     // controller at whatever value the finger dictates without ever entering
     // AnimationStatus.reverse.
-    final popping = !settled &&
+    final popping = !routeDriven &&
+        !settled &&
         (status == AnimationStatus.reverse ||
             userGesture ||
             (clocked && _clockStatus == AnimationStatus.reverse));
@@ -957,9 +984,11 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     final state = GlassNavPinnedState(
       from: from,
       to: top.value,
-      progress: committing
-          ? heldAtCommit.clamp(0.0, 1.0)
-          : _holdForGesture(progress, gesturing).clamp(0.0, 1.0),
+      progress: routeDriven
+          ? progress.clamp(0.0, 1.0)
+          : committing
+              ? heldAtCommit.clamp(0.0, 1.0)
+              : _holdForGesture(progress, gesturing).clamp(0.0, 1.0),
       coverage: coverage.clamp(0.0, 1.0),
       settled: settled,
       popping: popping,

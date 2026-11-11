@@ -299,6 +299,8 @@ class GlassNavPinnedState {
   /// the roles, so the swell leads and the bounce lands with the page in
   /// both directions. Rendering the push in reverse instead put all the
   /// motion at the wrong end of a pop.
+  /// Route-driven registrations leave this false, keeping both endpoints
+  /// fixed so reversing the route retraces its glass and foreground geometry.
   final bool popping;
 
   /// [progress] along the forward choreography — mirrored on a pop.
@@ -416,15 +418,12 @@ class GlassNavPinnedHost extends StatelessWidget {
         GlassNavPinnedMetrics.toolbarHeight;
     final statusRow = StatusBarRow.of(context);
 
-    Widget chrome = Stack(
-      clipBehavior: Clip.none,
+    Widget chrome = CustomMultiChildLayout(
+      delegate: _PinnedBarLayout(textDirection: textDirection),
       children: [
         for (final side in _BarSide.values)
-          Positioned.directional(
-            textDirection: textDirection,
-            start: side == _BarSide.leading ? 0 : null,
-            end: side == _BarSide.trailing ? 0 : null,
-            top: 0,
+          LayoutId(
+            id: side,
             child: _PinnedSide(
               state: state,
               groupsFor: (context, registration) => groupGlassNavBarItems(
@@ -440,6 +439,10 @@ class GlassNavPinnedHost extends StatelessWidget {
               minCross: statusRow == null ? barHeight : 0.0,
             ),
           ),
+        LayoutId(
+          id: #title,
+          child: GlassNavPinnedTitle(state: state),
+        ),
       ],
     );
 
@@ -1047,6 +1050,7 @@ class _PinnedSide extends StatelessWidget {
         fromGroups,
         toGroups,
         anchoredAtStart: fromStart,
+        matchByPosition: state.to.itemMatching == GlassBarItemMatching.position,
       ))
         (
           from: pair.from,
@@ -1577,6 +1581,7 @@ List<({GlassNavBarGroup? from, GlassNavBarGroup? to})> matchGlassNavGroups(
   List<GlassNavBarGroup> from,
   List<GlassNavBarGroup> to, {
   bool anchoredAtStart = false,
+  bool matchByPosition = false,
 }) {
   int slotOf(int index, int length) =>
       anchoredAtStart ? index : length - 1 - index;
@@ -1588,7 +1593,11 @@ List<({GlassNavBarGroup? from, GlassNavBarGroup? to})> matchGlassNavGroups(
   // can take a partner another group's items have already claimed.
   for (var t = 0; t < to.length; t++) {
     for (var f = 0; f < from.length; f++) {
-      if (usedFrom.contains(f) || !to[t].items.any(from[f].contains)) continue;
+      if (matchByPosition ||
+          usedFrom.contains(f) ||
+          !to[t].items.any(from[f].contains)) {
+        continue;
+      }
       matches[t] = f;
       usedFrom.add(f);
       break;
@@ -1640,7 +1649,9 @@ class GlassNavActionSlot {
     final to = toItem;
     return from != null &&
         to != null &&
-        !_sameContent(from.content, to.content);
+        (from.contentKey != null && to.contentKey != null
+            ? from.contentKey != to.contentKey
+            : !_sameContent(from.content, to.content));
   }
 
   /// Whether two content widgets draw the same thing.
@@ -1681,6 +1692,7 @@ List<GlassNavActionSlot> matchGlassNavActions(
   List<GlassBarActionItem> from,
   List<GlassBarActionItem> to, {
   bool anchoredAtStart = false,
+  bool matchByPosition = false,
 }) {
   // Slot index counts from the anchored edge, because that is the edge the
   // cluster grows away from.
@@ -1692,7 +1704,7 @@ List<GlassNavActionSlot> matchGlassNavActions(
 
   int? takeMatch(GlassBarActionItem toItem, int toIndex) {
     // 1. Explicit identifier match, mirroring UIBarButtonItem.identifier.
-    if (toItem.id != null) {
+    if (!matchByPosition && toItem.id != null) {
       for (var i = 0; i < from.length; i++) {
         if (usedFrom.contains(i)) continue;
         if (from[i].id == toItem.id) return i;
@@ -1703,7 +1715,9 @@ List<GlassNavActionSlot> matchGlassNavActions(
     final wanted = slotOf(toIndex, to.length);
     for (var i = 0; i < from.length; i++) {
       if (usedFrom.contains(i)) continue;
-      if (from[i].id != null && from[i].id != toItem.id) continue;
+      if (!matchByPosition && from[i].id != null && from[i].id != toItem.id) {
+        continue;
+      }
       if (slotOf(i, from.length) == wanted) return i;
     }
     return null;
@@ -2344,6 +2358,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
       fromItems,
       toItems,
       anchoredAtStart: widget.anchoredAtStart,
+      matchByPosition: state.to.itemMatching == GlassBarItemMatching.position,
     );
 
     // The gel: a swell pulse inflates the whole shell early — height, radius
@@ -2356,9 +2371,13 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // frozen while its neighbours morph.
     final overshoot = (springT - 1.0).clamp(0.0, 1.0);
     final morphing = fromItems.isNotEmpty && toItems.isNotEmpty;
-    final changes = widget.reshapes ||
+    final structuralChange = widget.reshapes ||
         fromItems.length != toItems.length ||
-        slots.any((s) => s.isEnter || s.isExit || s.crossFades);
+        slots.any((s) => s.isEnter || s.isExit);
+    final contentOnly = !structuralChange &&
+        state.to.contentTransition == GlassBarContentTransition.crossFade;
+    final changes =
+        structuralChange || (!contentOnly && slots.any((s) => s.crossFades));
     final morphScale = !morphing || !changes || state.settled || state.crossFade
         ? 1.0
         : 1.0 +
@@ -2422,7 +2441,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
 
     // Cross-fade window for a matched item whose content changed, and
     // entering / exiting items during a morph.
-    final q = state.crossFade
+    final q = state.crossFade || contentOnly
         ? p.clamp(0.0, 1.0)
         : ((morphT - GlassNavPinnedMetrics.crossFadeStart) /
                 (GlassNavPinnedMetrics.crossFadeEnd -
@@ -2438,12 +2457,14 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // contents are not glass, so filtering them is safe — the shell itself
     // never animates opacity. Groups without a destination dissolve as a
     // unit instead, with no independent glyph blur.
-    final outSigma = state.settled || state.crossFade || noDestination
-        ? 0.0
-        : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
-    final inSigma = state.settled || state.crossFade || noDestination
-        ? 0.0
-        : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
+    final outSigma =
+        state.settled || state.crossFade || contentOnly || noDestination
+            ? 0.0
+            : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
+    final inSigma =
+        state.settled || state.crossFade || contentOnly || noDestination
+            ? 0.0
+            : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
 
     // In the plain cross-fade or when dissolving without a destination,
     // glyphs fade with their group's glass.
@@ -2907,6 +2928,88 @@ class _ClusterItem extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: interactive ? onTap : null,
         child: content,
+      ),
+    );
+  }
+}
+
+/// Measures the actual animated controls before allocating the title's space.
+/// No estimates of text-action widths or frame-delayed size notifications.
+class _PinnedBarLayout extends MultiChildLayoutDelegate {
+  _PinnedBarLayout({required this.textDirection});
+  final TextDirection textDirection;
+
+  @override
+  void performLayout(Size size) {
+    final leading = layoutChild(_BarSide.leading, const BoxConstraints());
+    final trailing = layoutChild(_BarSide.trailing, const BoxConstraints());
+    final ltr = textDirection == TextDirection.ltr;
+    positionChild(
+        _BarSide.leading, Offset(ltr ? 0 : size.width - leading.width, 0));
+    positionChild(
+        _BarSide.trailing, Offset(ltr ? size.width - trailing.width : 0, 0));
+    final start = leading.width + (leading.width > 0 ? 8 : 0);
+    final end = trailing.width + (trailing.width > 0 ? 12 : 0);
+    layoutChild(
+        #title,
+        BoxConstraints.tightFor(
+          width: math.max(0, size.width - start - end),
+          height: size.height,
+        ));
+    positionChild(#title, Offset(ltr ? start : end, 0));
+  }
+
+  @override
+  bool shouldRelayout(_PinnedBarLayout oldDelegate) =>
+      oldDelegate.textDirection != textDirection;
+}
+
+/// The compact title owned by the navigation shell. Only one title is visible
+/// at a time; the fade-through is a pure function of the route progress, so
+/// reversing or cancelling a gesture retraces the same frames.
+class GlassNavPinnedTitle extends StatelessWidget {
+  /// Creates the compact title for the shell frame.
+  const GlassNavPinnedTitle({super.key, required this.state});
+
+  /// The shared navigation progress and route declarations.
+  final GlassNavPinnedState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state.presenting != null) return const SizedBox.shrink();
+    final from = state.flowFrom;
+    final to = state.flowTo;
+    final p = state.flowProgress;
+    final same = from.titleContentKey != null &&
+        from.titleContentKey == to.titleContentKey;
+    final incoming = state.settled || same || p >= .5;
+    final title = incoming ? to.title : from.title;
+    if (title == null) return const SizedBox.shrink();
+    final reduced = GlassAccessibilityData.of(context).reduceMotion ||
+        MediaQuery.disableAnimationsOf(context);
+    final opacity = state.settled || same || reduced
+        ? 1.0
+        : (incoming ? (p - .5) * 2 : 1 - p * 2).clamp(0.0, 1.0);
+    return IgnorePointer(
+      ignoring: !state.settled,
+      child: ExcludeSemantics(
+        excluding: !state.settled,
+        child: Opacity(
+          opacity: opacity * (1 - state.coverage),
+          child: ClipRect(
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: SizedBox(
+                width: double.infinity,
+                child: DefaultTextStyle.merge(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  child: title,
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

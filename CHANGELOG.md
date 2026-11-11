@@ -1,5 +1,9 @@
 # Unreleased
 
+## Features
+
+- Pinned custom bars can hoist a compact title, match cross-route presentation slots independently of business IDs, and replace foreground content without a gel swell. Opt-in route-driven transitions retrace pushes, pops and cancelled back gestures while reusing the existing glass merge/split renderer.
+
 ## Bug Fixes
 
 - Horizontal tab bar indicators now slide at their resting size on selection. Dragging still lifts the glass indicator.
