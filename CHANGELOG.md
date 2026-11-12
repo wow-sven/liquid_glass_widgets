@@ -1,10 +1,36 @@
 # Unreleased
 
+- Contract disappearing header action groups toward one button's size while
+  clearing their material early; appearing groups expand from that same empty
+  endpoint. Keep title layout, segmented selection and neighbour merges intact.
+  Fade empty-endpoint groups once through surface visibility, without stacking
+  foreground opacity and blur that hide the width change prematurely.
+
+- Expose hoisted header transition activity through
+  `GlassNavigationShell.isTransitioningOf`, so foregrounds can stop local
+  replacement animations while navigation owns their motion.
+
+- Allow custom bar foregrounds to reuse the title transition builder without fading their glass surface. Matching visual content keys remain stationary across action and callback changes.
+
+- Apply an explicit pinned `buttonSize` equally to shared capsules and separate buttons, keeping custom square actions circular without a per-action background override.
+
+- Animate header changes between retained navigation branches in the shared shell, including reversals and rapid retargeting. Route transitions retain their own clock; reduced motion switches immediately.
+
+- Resolve nested Navigator headers in one shell: active leaf pages supply chrome while ancestor routes drive flow transitions. Add `GlassNavigationBranch` for retained tab selection; separate sheet shells remain isolated. Compact titles keep their endpoint's measured inset while adjacent controls morph.
+
+- Prevent a newly registered route from being treated as settled before its push starts, avoiding a compact-title flash when transitioning to an empty header.
+
+- Allow compact title presentation to follow the navigation clock through a custom transition builder, including reversed and cancelled back gestures.
+
 ## Features
 
 - Pinned custom bars can hoist a compact title, match cross-route presentation slots independently of business IDs, and replace foreground content without a gel swell. Opt-in route-driven transitions retrace pushes, pops and cancelled back gestures while reusing the existing glass merge/split renderer.
 
 ## Bug Fixes
+
+- Scope pinned header registrations to their owning bar so a replaced or disabled bar cannot unregister another bar on the same route. Expose the pinned action-group spacing for custom bars to keep their in-route layout aligned with the hoisted layout.
+
+- Restore pinned header interaction when a cancelled back gesture ends after the route's final animation notification, including sheet-local navigation stacks.
 
 - Horizontal tab bar indicators now slide at their resting size on selection. Dragging still lifts the glass indicator.
 

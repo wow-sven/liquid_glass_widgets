@@ -5,6 +5,15 @@ import '../overlays/glass_modal_sheet.dart';
 import 'glass_navigation_shell.dart';
 import 'glass_vertical_bar.dart';
 
+/// Presents one foreground endpoint using the shared navigation progress.
+/// The builder owns its opacity and motion; the glass surface is unaffected.
+typedef GlassBarContentTransitionBuilder = Widget Function(
+  BuildContext context,
+  Widget child,
+  double progress,
+  bool incoming,
+);
+
 /// How unrelated routes pair their bar items and glass groups.
 enum GlassBarItemMatching {
   /// Prefer business identifiers, then fall back to position for anonymous items.
@@ -159,6 +168,7 @@ sealed class GlassBarItem {
     VoidCallback? onTap,
     Object? id,
     Object? contentKey,
+    GlassBarContentTransitionBuilder? transitionBuilder,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -373,12 +383,19 @@ final class GlassBarCustomItem extends GlassBarActionItem {
     VoidCallback? onTap,
     super.id,
     super.contentKey,
+    this.transitionBuilder,
     super.label,
     super.enabled,
     super.background,
     super.tintColor,
     super.axisBehavior,
   }) : super(onTap: onTap ?? GlassBarActionItem._noOp);
+
+  /// Optional replacement effect for changed, matched foregrounds.
+  /// Both endpoints must opt in; mixed content keeps the default dissolve.
+  /// Equal [contentKey] values skip the effect. Glass-owning content keeps its
+  /// surface-specific dissolve instead. A pair uses its incoming builder.
+  final GlassBarContentTransitionBuilder? transitionBuilder;
 
   /// The widget rendered inside the cluster, measured at its intrinsic width.
   final Widget child;

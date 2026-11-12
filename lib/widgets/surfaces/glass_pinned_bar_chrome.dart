@@ -62,6 +62,10 @@ class GlassPinnedBarChromeData {
   /// the top-trailing corner of the content beside the title.
   final List<Widget> actions;
 
+  /// Space between entries in [actions], matching the hoisted groups.
+  /// Each entry is a complete capsule; this is not spacing within a capsule.
+  double get actionGroupSpacing => GlassNavPinnedMetrics.groupGap;
+
   /// Whether the shell has taken this route's chrome.
   ///
   /// False while the bar still draws it, and true once the shell has both
@@ -186,6 +190,7 @@ class GlassPinnedBarChrome extends StatefulWidget {
     this.stripRowTop,
     this.title,
     this.titleContentKey,
+    this.titleTransitionBuilder,
     this.itemMatching = GlassBarItemMatching.identity,
     this.contentTransition = GlassBarContentTransition.gel,
     this.routeDrivenTransitions = false,
@@ -230,13 +235,11 @@ class GlassPinnedBarChrome extends StatefulWidget {
   /// `context.pop()`.
   final VoidCallback? onBack;
 
-  /// Diameter of standalone bar buttons (the automatic back button and
-  /// non-shared items), in logical pixels.
+  /// Uniform height of bar buttons and shared capsules, in logical pixels.
   ///
-  /// Defaults to [GlassNavPinnedMetrics.backDiameter] (`44.0`) when null.
-  /// Shared multi-item capsules scale proportionally (`buttonSize + 2.0`),
-  /// and custom items ([GlassBarItem.custom]) are constrained to this height
-  /// in a horizontal bar.
+  /// When null, standalone buttons use 44.0 and shared capsules use 46.0.
+  /// Custom items ([GlassBarItem.custom]) are constrained to the resolved
+  /// height in a horizontal bar.
   final double? buttonSize;
 
   /// Height of the toolbar row in which the pinned chrome sits, in logical
@@ -296,6 +299,9 @@ class GlassPinnedBarChrome extends StatefulWidget {
 
   /// Visible title identity. Equal non-null values retain the title unchanged.
   final Object? titleContentKey;
+
+  /// Optional title presentation driven by the shell's exact route progress.
+  final GlassNavTitleTransitionBuilder? titleTransitionBuilder;
 
   /// Matching policy for presentation slots across different routes.
   final GlassBarItemMatching itemMatching;
@@ -404,8 +410,8 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     // offstage once before the transition starts, and `offstage` does not
     // notify dependents when it flips back — so skipping those builds would
     // strand the route unregistered for the whole transition. Which route is
-    // on top is decided by the shell's ordering instead. (Inactive branches of
-    // a nested navigator are a known gap.)
+    // on top is decided by the shell's navigation tree instead. Retained tab
+    // containers declare selection through GlassNavigationBranch.
     // A bar in a presented route — a modal sheet's — is inside the
     // presentation, which comes up over the stack the shell pins across: the
     // presentation is its container, and the bar draws its own chrome.
@@ -457,10 +463,13 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
                 ),
               ),
         titleContentKey: widget.titleContentKey,
+        titleTransitionBuilder: widget.titleTransitionBuilder,
         itemMatching: widget.itemMatching,
         contentTransition: widget.contentTransition,
         routeDrivenTransitions: widget.routeDrivenTransitions,
       ),
+      owner: this,
+      active: GlassNavigationBranch.isActiveOf(context),
     );
   }
 
@@ -509,7 +518,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     final shell = _shell;
     final route = _route;
     if (shell != null && route != null) {
-      shell.unregister(route);
+      shell.unregister(route, owner: this);
     }
   }
 

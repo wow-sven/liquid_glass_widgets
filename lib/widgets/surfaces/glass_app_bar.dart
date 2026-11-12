@@ -200,14 +200,13 @@ class GlassAppBar extends StatelessWidget
   /// expands to [buttonSize] so buttons are never clipped.
   final double toolbarHeight;
 
-  /// Diameter of standalone bar buttons (the automatic back button and
-  /// non-shared items) on a [GlassAppBar.pinned] bar, in logical pixels.
+  /// Uniform height of buttons and shared capsules on a [GlassAppBar.pinned]
+  /// bar, in logical pixels.
   ///
-  /// Defaults to `44.0` when null. Shared multi-item capsules scale
-  /// proportionally (`buttonSize + 2.0`), and custom items
-  /// ([GlassBarItem.custom]) are constrained to this height in a horizontal
-  /// bar. When [buttonSize] exceeds [toolbarHeight], the toolbar row and
-  /// [preferredSize] expand to accommodate it.
+  /// When null, standalone buttons use 44.0 and shared capsules use 46.0.
+  /// Custom items ([GlassBarItem.custom]) are constrained to the resolved
+  /// height in a horizontal bar. When [buttonSize] exceeds [toolbarHeight],
+  /// the toolbar row and [preferredSize] expand to accommodate it.
   final double? buttonSize;
 
   double get _effectiveToolbarHeight =>

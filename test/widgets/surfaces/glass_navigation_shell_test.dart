@@ -589,8 +589,8 @@ void main() {
       await tester.pump();
 
       // Over the pop transition, while the capsule is dematerializing, the
-      // outgoing items should fade with the capsule glass (clusterPhaseAt)
-      // and must never apply glyph blur (outSigma == 0).
+      // outgoing items should fade once with the capsule glass and must never
+      // apply their own opacity or glyph blur on top of the material scope.
       var testedFrames = 0;
       for (var i = 0; i < 40; i++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -620,10 +620,18 @@ void main() {
             );
             expect(
               opacity,
-              closeTo(phase, 1e-4),
-              reason: 'item opacity must track capsule glass phase',
+              1.0,
+              reason: 'the material scope owns the entire empty-endpoint fade',
             );
           }
+          final opacity = tester
+              .widgetList<Opacity>(find.ancestor(
+                of: pinnedAdd(),
+                matching: find.byType(Opacity),
+              ))
+              .fold(1.0, (value, widget) => value * widget.opacity);
+          expect(opacity, closeTo(phase, 1e-4),
+              reason: 'the visible glyph fades exactly once with the glass');
         }
       }
 
@@ -874,6 +882,30 @@ void main() {
       await tester.tap(pinnedBack());
       expect(custom, 1);
       expect(find.text('Detail'), findsOneWidget);
+    });
+
+    testWidgets(
+        'gesture completion restores controls without an animation tick',
+        (tester) async {
+      var backs = 0;
+      await tester.pumpWidget(
+        shellApp(const _Screen(title: 'Root', actions: [])),
+      );
+      await settle(tester);
+      await _push(
+        tester,
+        _Screen(title: 'Detail', actions: const [], onBack: () => backs++),
+      );
+      await settle(tester);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.didStartUserGesture();
+      await tester.pump();
+      await tester.tap(pinnedBack(), warnIfMissed: false);
+      expect(backs, 0);
+      navigator.didStopUserGesture();
+      await tester.pumpAndSettle();
+      await tester.tap(pinnedBack());
+      expect(backs, 1);
     });
 
     testWidgets('pinned actions are inert mid-transition', (tester) async {
@@ -1757,7 +1789,7 @@ void main() {
     });
 
     testWidgets(
-        'shared multi-item capsule scales proportionally (buttonSize + 2) and '
+        'shared multi-item capsule uses the explicit buttonSize and '
         'matches in-route fallback', (tester) async {
       Widget buildScreen() => GlassScaffold(
             appBar: GlassAppBar.pinned(
@@ -1779,20 +1811,20 @@ void main() {
 
       await tester.pumpWidget(shellApp(buildScreen()));
       await settle(tester);
-      // 2 shared slots of (48 + 2) = 50pt each -> 100 x 50 with 25pt radius.
+      // Two 48pt slots form a 96 x 48 capsule with a 24pt radius.
       final pinnedShell = inHost(find.byType(GlassButton)).first;
       final pinnedSize = tester.getSize(pinnedShell);
-      expect(pinnedSize, const Size(100, 50));
+      expect(pinnedSize, const Size(96, 48));
       final pinnedShape = tester.widget<GlassButton>(pinnedShell).shape
           as LiquidRoundedRectangle;
-      expect(pinnedShape.borderRadius, 25.0);
+      expect(pinnedShape.borderRadius, 24.0);
 
       await tester.pumpWidget(shellApp(buildScreen(), enabled: false));
       await settle(tester);
       final inRouteGroup = inBar(find.byType(GlassButtonGroup)).first;
       final inRouteSize = tester.getSize(inRouteGroup);
       expect(inRouteSize, pinnedSize);
-      expect(tester.widget<GlassButtonGroup>(inRouteGroup).borderRadius, 25.0);
+      expect(tester.widget<GlassButtonGroup>(inRouteGroup).borderRadius, 24.0);
     });
 
     testWidgets(
@@ -1924,7 +1956,7 @@ void main() {
       );
       expect(
         tester.getSize(inHost(find.byType(GlassButton)).last),
-        const Size(100, 50),
+        const Size(96, 48),
       );
 
       tester.state<NavigatorState>(find.byType(Navigator)).pop();
@@ -1960,9 +1992,9 @@ void main() {
       }
       await settle(tester);
 
-      // Rest height is 50; the swell must rise above it, which a box bounded
+      // Rest height is 48; the swell must rise above it, which a box bounded
       // to the 48pt toolbar would have prevented.
-      expect(tallest, greaterThan(50.5));
+      expect(tallest, greaterThan(48.5));
     });
 
     testWidgets('buttonSize lays out mirrored under RTL', (tester) async {
