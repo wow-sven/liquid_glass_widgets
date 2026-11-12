@@ -723,12 +723,12 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
   ) {
     return SizedBox(
       width: item is GlassBarCustomItem
-          ? (group.axis == Axis.vertical ? group.crossExtent : null)
+          ? (group.axis == Axis.vertical ? group.crossExtent : item.extent)
           : (group.axis == Axis.horizontal
               ? group.slotExtent
               : group.crossExtent),
       height: item is GlassBarCustomItem
-          ? (group.axis == Axis.horizontal ? group.crossExtent : null)
+          ? (group.axis == Axis.horizontal ? group.crossExtent : item.extent)
           : (group.axis == Axis.vertical
               ? group.slotExtent
               : group.crossExtent),

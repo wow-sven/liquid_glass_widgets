@@ -16,7 +16,7 @@ void main() {
         expect(full.width, 200);
         final edge = frame.anchor(full);
         final widths = <double>[];
-        for (final progress in [0.0, .12, .28, .42, .54]) {
+        for (final progress in [0.0, .12, .28, .54, .98]) {
           await frame.show(tester, progress);
           final rect = frame.rect(tester);
           widths.add(rect.width);
@@ -39,7 +39,7 @@ void main() {
         expect(frame.rect(tester).width, closeTo(widths[2], .001));
         final effect = tester.widget<GlassMaterializeEffect>(
             find.byType(GlassMaterializeEffect));
-        expect(effect.progress, inExclusiveRange(.45, .55));
+        expect(effect.progress, inExclusiveRange(.9, 1));
         expect(effect.scaleFrom, 1);
         expect(effect.profile, GlassMaterializeProfile.uniform);
         final opacity = tester
@@ -60,7 +60,7 @@ void main() {
   testWidgets('empty endpoint follows button size and reserves no title space',
       (tester) async {
     final frame = _Frame(leading: true, buttonSize: 52);
-    await frame.show(tester, .54);
+    await frame.show(tester, .98);
     expect(frame.rect(tester).width, closeTo(52, .5));
     expect(frame.rect(tester).height, 52);
     final title = tester.getTopLeft(find.text('Destination'));
@@ -69,16 +69,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('contraction is substantial before the glass fades away',
+  testWidgets('wide geometry uses the full clock with a gentle start and end',
       (tester) async {
     final frame = _Frame(leading: true);
     // About 31 ms into the shared 260 ms tab clock.
     await frame.show(tester, .12);
-    expect(frame.rect(tester).width, lessThan(150));
+    expect(frame.rect(tester).width, inExclusiveRange(190, 200));
     final effect = tester
         .widget<GlassMaterializeEffect>(find.byType(GlassMaterializeEffect));
-    expect(effect.progress, greaterThan(.7));
+    expect(effect.progress,
+        closeTo(1 - Curves.easeInOutCubic.transform(.12), .001));
+    await frame.show(tester, .5);
+    expect(frame.rect(tester).width, closeTo(122, .1));
+    await frame.show(tester, .75);
+    expect(frame.rect(tester).width, inExclusiveRange(44, 65));
+    await frame.show(tester, .05);
+    expect(
+        tester
+            .widget<GlassMaterializeEffect>(find.byType(GlassMaterializeEffect))
+            .progress,
+        lessThan(1),
+        reason: 'Fade-out starts without a delayed window.');
+    await frame.show(tester, .95, entering: true);
+    expect(
+        tester
+            .widget<GlassMaterializeEffect>(find.byType(GlassMaterializeEffect))
+            .progress,
+        lessThan(1),
+        reason: 'Fade-in continues through the full clock.');
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('single-slot custom actions keep the original fade window',
+      (tester) async {
+    final frame = _Frame(leading: true, extent: 44);
+    await frame.show(tester, .28);
+    expect(frame.rect(tester).width, 44);
+    var effect = tester
+        .widget<GlassMaterializeEffect>(find.byType(GlassMaterializeEffect));
+    expect(effect.progress, closeTo(1 - .28 / .55, .001));
+    await frame.show(tester, .72, entering: true);
+    effect = tester
+        .widget<GlassMaterializeEffect>(find.byType(GlassMaterializeEffect));
+    expect(effect.progress, closeTo((.72 - .45) / .55, .001));
+    expect(frame.rect(tester).width, 44);
   });
 
   testWidgets('reduced motion retains full geometry before switching away',
@@ -97,10 +131,11 @@ class _Frame {
       {required this.leading,
       this.direction = TextDirection.ltr,
       this.buttonSize = 44,
-      this.reduced = false});
+      this.reduced = false,
+      this.extent = 200});
   final bool leading, reduced;
   final TextDirection direction;
-  final double buttonSize;
+  final double buttonSize, extent;
   final route = MaterialPageRoute<void>(builder: (_) => const SizedBox());
 
   GlassNavBarRegistration registration(bool populated) {
@@ -108,10 +143,11 @@ class _Frame {
       if (populated)
         GlassBarItem.custom(
           id: 'wide',
-          child: const SizedBox(
+          extent: extent,
+          child: SizedBox(
               key: ValueKey('foreground'),
-              width: 200,
-              child: Text('A wide action group')),
+              width: extent,
+              child: const Text('A wide action group')),
         ),
     ];
     return GlassNavBarRegistration(

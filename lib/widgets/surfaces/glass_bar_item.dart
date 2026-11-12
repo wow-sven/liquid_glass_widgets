@@ -14,6 +14,18 @@ typedef GlassBarContentTransitionBuilder = Widget Function(
   bool incoming,
 );
 
+/// Builds one shared foreground for two compatible custom contents.
+/// Both items opt in; the destination builder receives the endpoint widgets.
+/// Return null for incompatible contents to retain their default transition.
+/// The result owns foreground motion and is measured at the destination extent;
+/// the shell continues measuring both endpoints and owns geometry and input.
+typedef GlassBarPairedContentTransitionBuilder = Widget? Function(
+  BuildContext context,
+  Widget from,
+  Widget to,
+  double progress,
+);
+
 /// How unrelated routes pair their bar items and glass groups.
 enum GlassBarItemMatching {
   /// Prefer business identifiers, then fall back to position for anonymous items.
@@ -165,10 +177,12 @@ sealed class GlassBarItem {
   /// node (replacing [child]'s own text semantics).
   const factory GlassBarItem.custom({
     required Widget child,
+    double? extent,
     VoidCallback? onTap,
     Object? id,
     Object? contentKey,
     GlassBarContentTransitionBuilder? transitionBuilder,
+    GlassBarPairedContentTransitionBuilder? pairedTransitionBuilder,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -380,10 +394,12 @@ final class GlassBarCustomItem extends GlassBarActionItem {
   /// Creates a custom item. Prefer [GlassBarItem.custom].
   const GlassBarCustomItem({
     required this.child,
+    this.extent,
     VoidCallback? onTap,
     super.id,
     super.contentKey,
     this.transitionBuilder,
+    this.pairedTransitionBuilder,
     super.label,
     super.enabled,
     super.background,
@@ -396,6 +412,17 @@ final class GlassBarCustomItem extends GlassBarActionItem {
   /// Equal [contentKey] values skip the effect. Glass-owning content keeps its
   /// surface-specific dissolve instead. A pair uses its incoming builder.
   final GlassBarContentTransitionBuilder? transitionBuilder;
+
+  /// Optional coordinated replacement for composite foregrounds. Unlike
+  /// [transitionBuilder], this paints the matched pair once, allowing unchanged
+  /// subcontent and a shared selection indicator to remain visible. It also
+  /// receives equal content keys, since a stable composite can change internally.
+  final GlassBarPairedContentTransitionBuilder? pairedTransitionBuilder;
+
+  /// Declared main-axis size of the custom foreground, when fixed.
+  /// Pinned layout uses this size and treats a single item no wider than one
+  /// button as compact. Null uses intrinsic layout and wide-content motion.
+  final double? extent;
 
   /// The widget rendered inside the cluster, measured at its intrinsic width.
   final Widget child;

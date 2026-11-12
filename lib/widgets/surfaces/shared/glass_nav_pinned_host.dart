@@ -84,6 +84,15 @@ abstract final class GlassNavPinnedMetrics {
   static double morphProgressAt(double progress) =>
       ((progress - morphStart) / (morphEnd - morphStart)).clamp(0.0, 1.0);
 
+  /// Non-overlapping foreground handoff when wide composite content becomes
+  /// a compact control (or vice versa). Follow geometry, not elapsed time:
+  /// a spring can narrow the shell well before the route clock reaches halfway.
+  static double compositePresenceAt(double geometry,
+          {required bool incoming}) =>
+      incoming
+          ? Curves.easeInCubic.transform(((geometry - .5) * 2).clamp(0.0, 1.0))
+          : 1 - Curves.easeOutCubic.transform((geometry * 2).clamp(0.0, 1.0));
+
   /// Window during which a matched item's icon cross-fades, as a fraction of
   /// the [morphStart]..[morphEnd] morph window.
   static const double crossFadeStart = 0.25;
@@ -935,6 +944,48 @@ List<GlassNavBarGroup> fitGlassNavStripGroups(
   ];
 }
 
+// Fixed single-slot custom foregrounds (avatars, icons) have the same timing
+// as native icons. Intrinsic content and multi-item groups need room to resize.
+bool _wideEmptyGroup(BuildContext context, GlassNavPinnedState state,
+    GlassNavBarGroup? from, GlassNavBarGroup? to) {
+  if ((from == null) == (to == null) ||
+      state.crossFade ||
+      state.transition == GlassEffectTransition.identity ||
+      GlassAccessibilityData.of(context).reduceMotion ||
+      MediaQuery.disableAnimationsOf(context)) {
+    return false;
+  }
+  final group = (from ?? to)!;
+  if (!group.glass) return false;
+  if (group.items.length > 1) return true;
+  final item = group.items.single;
+  return item is GlassBarCustomItem &&
+      (item.extent == null || item.extent! > group.crossExtent);
+}
+
+// Wide custom foregrounds can contain selection fills and several labels.
+// Treat those as one face, while text builders and compact avatars/icons keep
+// their existing replacement effects. No knowledge of a page or switch widget.
+bool _compositeHandoff(
+    GlassNavActionSlot slot, double fromExtent, double toExtent) {
+  bool composite(GlassBarActionItem? item, double extent) =>
+      item is GlassBarCustomItem &&
+      item.transitionBuilder == null &&
+      item.extent != null &&
+      item.extent! > extent;
+  bool compact(GlassBarActionItem? item, double extent) =>
+      item != null &&
+      (item is! GlassBarCustomItem ||
+          (item.extent != null && item.extent! <= extent));
+  return slot.crossFades &&
+      slot.fromItem!.background != GlassBarItemBackground.own &&
+      slot.toItem!.background != GlassBarItemBackground.own &&
+      ((composite(slot.fromItem, fromExtent) &&
+              compact(slot.toItem, toExtent)) ||
+          (compact(slot.fromItem, fromExtent) &&
+              composite(slot.toItem, toExtent)));
+}
+
 /// How much of a group is drawn at [state]'s progress: its materialize phase,
 /// or 1.0 for a group both routes have.
 ///
@@ -950,6 +1001,12 @@ double _groupPhaseAt(
 ) {
   final sides = _resolveGroupSides(from, to, state.flowProgress);
   if (sides.from == null && sides.to == null) return 0.0;
+  if (_wideEmptyGroup(context, state, sides.from, sides.to)) {
+    final motion = GlassNavigationShell.headerMotionOf(context);
+    return sides.from == null
+        ? motion.emptyGroupFadeInCurve.transform(state.flowProgress)
+        : 1 - motion.emptyGroupFadeOutCurve.transform(state.flowProgress);
+  }
   return GlassNavPinnedHost.phaseFor(
     context,
     state,
@@ -2476,18 +2533,11 @@ class _PinnedGroupState extends State<_PinnedGroup> {
 
     // Drives the materialize window for a group that only one route has. The
     // side keeps zero-phase groups offstage when measuring title endpoints.
-    final phase = widget.buds
-        ? 1.0
-        : GlassNavPinnedHost.phaseFor(
-            context,
-            state,
-            inFrom: fromItems.isNotEmpty,
-            inTo: toItems.isNotEmpty,
-          );
+    final phase = widget.buds ? 1.0 : _groupPhaseAt(context, state, from, to);
 
     // A lone glass group contracts to one button at the empty endpoint. Use
-    // the existing presence window, so a reversed gesture retraces geometry
-    // and material together. Budding groups keep their neighbour handoff.
+    // one reversible clock for geometry and material. Wide groups spread size
+    // over the full clock; budding groups keep their neighbour handoff.
     final contractsToEmpty = !morphing &&
         !widget.buds &&
         (from ?? to)!.glass &&
@@ -2495,17 +2545,19 @@ class _PinnedGroupState extends State<_PinnedGroup> {
         state.transition != GlassEffectTransition.identity &&
         !GlassAccessibilityData.of(context).reduceMotion &&
         !MediaQuery.disableAnimationsOf(context);
-    // Move the edge while the glass is still visible. An ease-in presence
-    // means an ease-out contraction as presence falls; fading it again here
-    // would hide most of the size change during a short tab transition.
+    final wideEmpty =
+        contractsToEmpty && _wideEmptyGroup(context, state, from, to);
+    final motion = GlassNavigationShell.headerMotionOf(context);
     final extentPresence = Curves.easeInCubic.transform(phase);
-    final widthT = contractsToEmpty
-        ? (fromItems.isEmpty ? extentPresence : 1 - extentPresence)
-        : fromItems.isEmpty
-            ? 1.0
-            : toItems.isEmpty
-                ? 0.0
-                : clampedT;
+    final widthT = wideEmpty
+        ? motion.emptyGroupSizeCurve.transform(p)
+        : contractsToEmpty
+            ? (fromItems.isEmpty ? extentPresence : 1 - extentPresence)
+            : fromItems.isEmpty
+                ? 1.0
+                : toItems.isEmpty
+                    ? 0.0
+                    : clampedT;
 
     // The absent side inherits thickness and radius, but has no content.
     final fromGroup = from ?? to!;
@@ -2578,6 +2630,39 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // glyphs fade with their group's glass.
     final fadesWithGroup = (state.crossFade || noDestination) && !morphing;
 
+    final handoffSlots = <int>{
+      if (!state.settled &&
+          !state.crossFade &&
+          state.transition != GlassEffectTransition.identity &&
+          !GlassAccessibilityData.of(context).reduceMotion &&
+          !MediaQuery.disableAnimationsOf(context))
+        for (var i = 0; i < slots.length; i++)
+          if (_compositeHandoff(
+              slots[i], fromGroup.slotExtent, toGroup.slotExtent))
+            i,
+    };
+
+    final pairedContents = <int, Widget>{};
+    if (!state.settled) {
+      final reduced = GlassAccessibilityData.of(context).reduceMotion ||
+          MediaQuery.disableAnimationsOf(context);
+      for (var i = 0; i < slots.length; i++) {
+        final pair = slots[i];
+        final from = pair.fromItem;
+        final to = pair.toItem;
+        if (from is GlassBarCustomItem &&
+            to is GlassBarCustomItem &&
+            from.pairedTransitionBuilder != null &&
+            to.pairedTransitionBuilder != null &&
+            from.background != GlassBarItemBackground.own &&
+            to.background != GlassBarItemBackground.own) {
+          final content = to.pairedTransitionBuilder!(
+              context, from.child, to.child, reduced ? (p >= .5 ? 1 : 0) : p);
+          if (content != null) pairedContents[i] = content;
+        }
+      }
+    }
+
     // An item whose content is itself glass cannot be faded or blurred from
     // outside: painted under an opacity or image-filter layer it has no
     // backdrop to sample, and renders as its backer until the layer is gone.
@@ -2607,6 +2692,25 @@ class _PinnedGroupState extends State<_PinnedGroup> {
         );
       }
       final pair = slots[slot];
+      if (pairedContents.containsKey(slot)) {
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: isFrom ? 0 : 1,
+          blurSigma: 0,
+          child: child,
+        );
+      }
+      if (handoffSlots.contains(slot)) {
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: GlassNavPinnedMetrics.compositePresenceAt(clampedT,
+              incoming: !isFrom),
+          blurSigma: 0,
+          child: child,
+        );
+      }
       GlassBarContentTransitionBuilder? builderOf(GlassBarActionItem? action) =>
           action is GlassBarCustomItem ? action.transitionBuilder : null;
       // Only like foregrounds opt into the replacement effect. A text/icon
@@ -2711,7 +2815,10 @@ class _PinnedGroupState extends State<_PinnedGroup> {
             ));
           }
         } else if (crossFades &&
-            (measureEndpoints || (!state.settled ? q < 1.0 : !showsIncoming))) {
+            (measureEndpoints ||
+                handoffSlots.contains(i) ||
+                pairedContents.containsKey(i) ||
+                (!state.settled ? q < 1.0 : !showsIncoming))) {
           // Cross-fading outgoing side.
           children.add(clusterChild(
             slot: i,
@@ -2769,6 +2876,8 @@ class _PinnedGroupState extends State<_PinnedGroup> {
           }
         } else if (!crossFades ||
             measureEndpoints ||
+            handoffSlots.contains(i) ||
+            pairedContents.containsKey(i) ||
             (!state.settled ? q > 0.0 : showsIncoming)) {
           // Matched persistent item or cross-fading incoming side.
           children.add(clusterChild(
@@ -2789,6 +2898,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
             item: toItem,
             child: _ClusterItem(
               item: toItem,
+              contentOverride: pairedContents[i],
               enabled: state.settled,
               slotExtent: toGroup.slotExtent,
               axis: toGroup.axis,
@@ -2989,6 +3099,7 @@ class _OwnGlassDissolve extends StatelessWidget {
 class _ClusterItem extends StatelessWidget {
   const _ClusterItem({
     required this.item,
+    this.contentOverride,
     required this.enabled,
     required this.slotExtent,
     this.axis = Axis.horizontal,
@@ -2998,6 +3109,7 @@ class _ClusterItem extends StatelessWidget {
   });
 
   final GlassBarActionItem item;
+  final Widget? contentOverride;
   final bool enabled;
 
   /// Tint colour forwarded from [GlassBarActionItem.tintColor].
@@ -3039,7 +3151,11 @@ class _ClusterItem extends StatelessWidget {
       GlassBarIconItem(:final icon) => slot(icon),
       GlassBarMenuItem(:final icon) => slot(icon),
       GlassBarSheetItem(:final icon) => slot(icon),
-      GlassBarCustomItem(:final child) => child,
+      GlassBarCustomItem(:final child, :final extent) => extent == null
+          ? contentOverride ?? child
+          : axis == Axis.vertical
+              ? SizedBox(height: extent, child: contentOverride ?? child)
+              : SizedBox(width: extent, child: contentOverride ?? child),
     };
 
     content = IconTheme.merge(

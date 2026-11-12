@@ -1,5 +1,20 @@
 # Unreleased
 
+- Allow matched custom foregrounds to coordinate subcontent through one paired
+  transition builder, using the existing navigation clock. Endpoint measurement,
+  glass geometry and interaction remain owned by the header.
+
+- Hand off wide composite header foregrounds and compact controls without
+  overlapping selection fills, labels and incoming icons. Foreground presence
+  follows the existing shell geometry and retraces with navigation gestures;
+  text replacement, empty endpoints and same-control selection stay unchanged.
+
+- Add `GlassHeaderMotion` configuration to the navigation shell. Wide action
+  groups resize across the full branch clock (260 ms by default), with separate
+  smooth fade curves over that same full clock, without staggered windows.
+  Single-button actions retain their materialize timing;
+  custom foregrounds can declare a fixed `extent` to share compact timing.
+
 - Add page-controlled, reversible pinned action transitions. Local gestures
   interpolate capsule geometry directly and retain action identity; route
   navigation keeps its existing clock and takes priority.

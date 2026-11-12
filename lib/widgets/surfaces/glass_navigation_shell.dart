@@ -14,6 +14,32 @@ import 'glass_large_title.dart';
 import 'glass_vertical_bar.dart';
 import 'shared/glass_nav_pinned_host.dart';
 
+/// Shared timing for pinned header navigation. Route gestures retain their
+/// route clock; branch changes use [branchDuration].
+@immutable
+class GlassHeaderMotion {
+  /// Creates the header motion configuration.
+  const GlassHeaderMotion({
+    this.branchDuration = const Duration(milliseconds: 260),
+    this.emptyGroupSizeCurve = Curves.easeInOut,
+    this.emptyGroupFadeInCurve = Curves.easeInOutCubic,
+    this.emptyGroupFadeOutCurve = Curves.easeInOutCubic,
+  });
+
+  /// Duration of header changes between retained Navigator branches.
+  final Duration branchDuration;
+
+  /// Full-clock size interpolation for a wide group and an empty endpoint.
+  /// Single-button groups keep their existing materialize window.
+  final Curve emptyGroupSizeCurve;
+
+  /// Opacity of an entering wide group, independent of its size.
+  final Curve emptyGroupFadeInCurve;
+
+  /// Amount faded out of a leaving wide group, independent of its size.
+  final Curve emptyGroupFadeOutCurve;
+}
+
 /// Renders one title face with the navigation clock. Incoming identifies the
 /// selected endpoint; progress reverses with an interactive back gesture.
 typedef GlassNavTitleTransitionBuilder = GlassBarContentTransitionBuilder;
@@ -319,6 +345,7 @@ class GlassNavigationShell extends StatefulWidget {
     super.key,
     required this.child,
     this.enabled = true,
+    this.headerMotion = const GlassHeaderMotion(),
     this.effectTransition = GlassEffectTransition.materialize,
     this.swipeCommitTransition = GlassSwipeCommitTransition.effect,
     this.verticalBarBehavior = GlassVerticalBarBehavior.automatic,
@@ -334,6 +361,9 @@ class GlassNavigationShell extends StatefulWidget {
   /// When false the shell is inert and every screen renders its bar chrome
   /// in-route, exactly as if no shell were installed.
   final bool enabled;
+
+  /// Shared header timing, independent of page and foreground content.
+  final GlassHeaderMotion headerMotion;
 
   /// How chrome that appears or disappears across a transition animates —
   /// a back button on the first push off the root, an actions capsule on a
@@ -391,6 +421,13 @@ class GlassNavigationShell extends StatefulWidget {
           ?.transitioning ??
       false;
 
+  /// Motion configuration of the enclosing hoisted header.
+  static GlassHeaderMotion headerMotionOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<_GlassHeaderMotionScope>()
+          ?.motion ??
+      const GlassHeaderMotion();
+
   @override
   State<GlassNavigationShell> createState() => GlassNavigationShellState();
 }
@@ -426,7 +463,7 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
   _GlassNavigationResolution? _branchFrom, _branchTo;
   late final AnimationController _branchClock = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 260),
+    duration: widget.headerMotion.branchDuration,
     value: 1,
   );
   double? _branchPendingProgress;
@@ -1165,6 +1202,7 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || revision != _branchRevision) return;
       _branchPendingProgress = null;
+      _branchClock.duration = widget.headerMotion.branchDuration;
       _branchClock.value = progress;
       if (target == 1) {
         _branchClock.forward();
@@ -1619,6 +1657,7 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
                     data: verticalBar,
                     child: _GlassHeaderMotionScope(
                       transitioning: !state.settled,
+                      motion: widget.headerMotion,
                       child: GlassNavPinnedHost(state: state),
                     ),
                   );
@@ -1634,14 +1673,16 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
 class _GlassHeaderMotionScope extends InheritedWidget {
   const _GlassHeaderMotionScope({
     required this.transitioning,
+    required this.motion,
     required super.child,
   });
 
   final bool transitioning;
+  final GlassHeaderMotion motion;
 
   @override
   bool updateShouldNotify(_GlassHeaderMotionScope oldWidget) =>
-      transitioning != oldWidget.transitioning;
+      transitioning != oldWidget.transitioning || motion != oldWidget.motion;
 }
 
 /// Exposes the shell state to descendant registrants.

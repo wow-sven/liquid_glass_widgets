@@ -127,6 +127,7 @@ export 'widgets/surfaces/glass_bar_item.dart';
 export 'widgets/surfaces/glass_navigation_shell.dart'
     show
         GlassNavigationShell,
+        GlassHeaderMotion,
         GlassNavigationBranch,
         GlassNavigationShellState,
         GlassNavTitleTransitionBuilder,
