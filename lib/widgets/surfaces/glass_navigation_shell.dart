@@ -258,6 +258,8 @@ class _GlassBranchScope extends InheritedWidget {
 /// the shell supplies a short header transition when selection changes without
 /// a route animation. Switching back reverses that transition.
 /// Use another shell only for a separate presentation surface, such as a sheet.
+/// A shell inside a popup route keeps the enclosing shell's header in-route
+/// until that popup's exit animation finishes.
 ///
 /// Screens opt in with the [GlassAppBar.pinned] constructor. Screens using
 /// the plain [GlassAppBar] are unaffected, and when no shell is present (or
@@ -363,6 +365,12 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
   // Paths run from this presentation boundary down to the declaring route.
   final Map<ModalRoute<dynamic>, List<ModalRoute<dynamic>>> _routePaths = {};
   final Set<ModalRoute<dynamic>> _inactiveRoutes = {};
+
+  // A sheet-local shell publishes its presentation to the enclosing shell.
+  // The covered page becomes current at pop START, before the modal has left.
+  final Map<GlassNavigationShellState, PopupRoute<dynamic>> _presentations = {};
+  GlassNavigationShellState? _presentationParent;
+  PopupRoute<dynamic>? _presentationRoute;
 
   // Branch selection has no route animation. Keep its endpoints in this host,
   // so the same title/controls renderer can animate across retained Navigators.
@@ -532,6 +540,15 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final parent = GlassNavigationShell.maybeOf(context);
+    final route = ModalRoute.of(context);
+    final presentation = route is PopupRoute<dynamic> ? route : null;
+    if (parent != _presentationParent || presentation != _presentationRoute) {
+      _presentationParent?._setPresentation(this, null);
+      _presentationParent = parent;
+      _presentationRoute = presentation;
+      parent?._setPresentation(this, presentation);
+    }
     // Pinning is chrome GEOMETRY: it hoists the registered bar out of the
     // route into the shell so it survives the transition. It costs no shader
     // of its own, and the pinned bar still renders through the normal glass
@@ -981,9 +998,31 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
   ///
   /// `isCurrent` cannot answer this on its own: a route being popped is not
   /// current either, and it owns the chrome for the whole of its exit. What
-  /// separates the two is whether any transition is running.
-  static bool _isPresentedOver(ModalRoute<dynamic> route) =>
-      !route.isCurrent && _isAtRest(route);
+  /// separates the two is whether any transition is running. Sheet-local
+  /// shells also report their popup's lifetime: the covered page becomes
+  /// current before the popup's reverse transition has finished.
+  bool _isPresentedOver(ModalRoute<dynamic> route) =>
+      (!route.isCurrent && _isAtRest(route)) ||
+      _presentations.values.any((presentation) =>
+          identical(presentation.navigator, route.navigator) &&
+          (presentation.isCurrent || !presentation.isActive) &&
+          presentation.animation?.status != AnimationStatus.dismissed);
+
+  void _setPresentation(
+    GlassNavigationShellState owner,
+    PopupRoute<dynamic>? route,
+  ) {
+    if (!mounted) return;
+    final previous = _presentations.remove(owner);
+    previous?.animation?.removeStatusListener(_onPresentationStatus);
+    if (route != null) {
+      _presentations[owner] = route;
+      route.animation?.addStatusListener(_onPresentationStatus);
+    }
+    _scheduleNotify();
+  }
+
+  void _onPresentationStatus(AnimationStatus status) => _scheduleNotify();
 
   /// Whether no transition involving [route] is in flight.
   static bool _isAtRest(ModalRoute<dynamic> route) =>
@@ -1342,6 +1381,11 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
 
   @override
   void dispose() {
+    _presentationParent?._setPresentation(this, null);
+    for (final route in _presentations.values) {
+      route.animation?.removeStatusListener(_onPresentationStatus);
+    }
+    _presentations.clear();
     VerticalBarRegions.instance.removeListener(_onVerticalBarRegions);
     VerticalBarRegions.instance.edge.removeListener(_onVerticalBarRegions);
     for (final animation in _listened) {
@@ -1494,7 +1538,18 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
         children: [
           GlassVerticalBar(
             data: verticalBar,
-            child: _mediaQueryFor(context, verticalBar, widget.child),
+            child: NotificationListener<NavigationNotification>(
+              onNotification: (_) {
+                // A modal on an ancestor Navigator changes isCurrent without
+                // driving the covered route's secondary animation. Its leaf
+                // header may not rebuild either, so refresh the handover from
+                // Navigator history notifications as well as animation ticks.
+                _scheduleNotify();
+                // Preserve notifications used by nested navigation/back handling.
+                return false;
+              },
+              child: _mediaQueryFor(context, verticalBar, widget.child),
+            ),
           ),
           // The chrome gets an Overlay of its own because it deliberately sits
           // above the app's Navigator, and therefore outside the Navigator's

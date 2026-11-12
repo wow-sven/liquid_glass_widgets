@@ -1,5 +1,12 @@
 # Unreleased
 
+- Keep the app header beneath a sheet-local navigation shell's modal barrier
+  until its reverse transition finishes, including nested presentations.
+
+- Refresh pinned header handover when an ancestor Navigator presents or closes
+  a modal without a page transition, keeping headers beneath root sheets and
+  dialogs and restoring them when the modal closes.
+
 - Contract disappearing header action groups toward one button's size while
   clearing their material early; appearing groups expand from that same empty
   endpoint. Keep title layout, segmented selection and neighbour merges intact.

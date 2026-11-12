@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:liquid_glass_widgets/widgets/surfaces/shared/glass_nav_pinned_host.dart';
 
 void main() {
   setUp(() => GlassNavigationShellState.debugPinningSupported = true);
@@ -142,48 +143,103 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('sheet shell isolates its routes from the app navigation tree',
-      (tester) async {
-    final shell = GlobalKey<GlassNavigationShellState>();
-    final outer = GlobalKey<NavigatorState>();
-    final inner = GlobalKey<NavigatorState>();
-    final sheetShell = GlobalKey<GlassNavigationShellState>();
-    final sheetNavigator = GlobalKey<NavigatorState>();
-    await tester.pumpWidget(_app(
-      shell,
-      outer,
-      _nested(inner, const _Header('App leaf')),
-    ));
-    await tester.pumpAndSettle();
-    showModalBottomSheet<void>(
-      context: tester.element(find.byType(_Header)),
-      useRootNavigator: true,
-      builder: (_) => GlassNavigationShell(
-        key: sheetShell,
-        child: _nested(sheetNavigator, const _Header('Sheet')),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(shell.currentState!.resolveState(), isNull);
-    expect(
-        sheetShell.currentState!.resolveState()!.to.titleContentKey, 'Sheet');
-    expect(sheetShell.currentState!.resolveState()!.settled, isTrue);
-    sheetNavigator.currentState!.push(_route(const _Header('Sheet detail')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(
-        sheetShell.currentState!.resolveState()!.from.titleContentKey, 'Sheet');
-    expect(sheetShell.currentState!.resolveState()!.to.titleContentKey,
-        'Sheet detail');
-    expect(shell.currentState!.resolveState(), isNull);
-    await tester.pumpAndSettle();
-    outer.currentState!.pop();
-    await tester.pumpAndSettle();
-    expect(shell.currentState!.resolveState()!.to.titleContentKey, 'App leaf');
-    expect(shell.currentState!.resolveState()!.settled, isTrue);
-    expect(tester.takeException(), isNull);
-  });
+  for (final useRootNavigator in [false, true]) {
+    testWidgets(
+        'sheet shell isolates routes through exit, root=$useRootNavigator',
+        (tester) async {
+      final shell = GlobalKey<GlassNavigationShellState>();
+      final outer = GlobalKey<NavigatorState>();
+      final inner = GlobalKey<NavigatorState>();
+      final sheetShell = GlobalKey<GlassNavigationShellState>();
+      final sheetNavigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(_app(
+        shell,
+        outer,
+        _nested(inner, const _Header('App leaf')),
+      ));
+      await tester.pumpAndSettle();
+      showModalBottomSheet<void>(
+        context: tester.element(find.byType(_Header)),
+        useRootNavigator: useRootNavigator,
+        builder: (_) => GlassNavigationShell(
+          key: sheetShell,
+          child: _nested(sheetNavigator, const _Header('Sheet')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(shell.currentState!.resolveState(), isNull);
+      expect(_pinnedTitle('App leaf'), findsNothing);
+      expect(_pinnedTitle('Sheet'), findsOneWidget);
+      expect(
+          sheetShell.currentState!.resolveState()!.to.titleContentKey, 'Sheet');
+      expect(sheetShell.currentState!.resolveState()!.settled, isTrue);
+      sheetNavigator.currentState!.push(_route(const _Header('Sheet detail')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(sheetShell.currentState!.resolveState()!.from.titleContentKey,
+          'Sheet');
+      expect(sheetShell.currentState!.resolveState()!.to.titleContentKey,
+          'Sheet detail');
+      expect(shell.currentState!.resolveState(), isNull);
+      await tester.pumpAndSettle();
+      (useRootNavigator ? outer : inner).currentState!.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(_pinnedTitle('App leaf'), findsNothing);
+      expect(sheetShell.currentState, isNotNull);
+      await tester.pumpAndSettle();
+      expect(
+          shell.currentState!.resolveState()!.to.titleContentKey, 'App leaf');
+      expect(_pinnedTitle('App leaf'), findsOneWidget);
+      expect(shell.currentState!.resolveState()!.settled, isTrue);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final useRootNavigator in [false, true]) {
+    testWidgets(
+        'nested header hands back through stacked dialogs, root=$useRootNavigator',
+        (tester) async {
+      final shell = GlobalKey<GlassNavigationShellState>();
+      final outer = GlobalKey<NavigatorState>();
+      final inner = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(_app(
+        shell,
+        outer,
+        _nested(inner, const _Header('Leaf')),
+      ));
+      await tester.pumpAndSettle();
+      final context = tester.element(find.byType(_Header));
+      final navigator = useRootNavigator ? outer : inner;
+      expect(_pinnedTitle('Leaf'), findsOneWidget);
+
+      for (var i = 0; i < 2; i++) {
+        showDialog<void>(
+          context: context,
+          useRootNavigator: useRootNavigator,
+          builder: (_) => AlertDialog(title: Text('Dialog $i')),
+        );
+        await tester.pumpAndSettle();
+        // Inspect the rendered overlay: resolveState alone can be correct
+        // while a stale host is still painted above the modal barrier.
+        expect(_pinnedTitle('Leaf'), findsNothing);
+        expect(find.text('Leaf'), findsOneWidget);
+      }
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(_pinnedTitle('Leaf'), findsNothing);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(_pinnedTitle('Leaf'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
+
+Finder _pinnedTitle(String title) => find.descendant(
+      of: find.byType(GlassNavPinnedHost),
+      matching: find.text(title),
+    );
 
 Widget _app(GlobalKey<GlassNavigationShellState> shell,
         GlobalKey<NavigatorState> navigator, Widget home) =>
