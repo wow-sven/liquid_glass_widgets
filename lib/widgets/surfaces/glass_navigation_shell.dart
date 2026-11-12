@@ -18,6 +18,27 @@ import 'shared/glass_nav_pinned_host.dart';
 /// selected endpoint; progress reverses with an interactive back gesture.
 typedef GlassNavTitleTransitionBuilder = GlassBarContentTransitionBuilder;
 
+/// Explicit endpoints for a same-page trailing action transition.
+/// The page supplies progress, including reversals; route animations take priority.
+@immutable
+class GlassBarActionTransition {
+  /// Creates a transition from [from] at zero to [to] at one.
+  const GlassBarActionTransition({
+    required this.from,
+    required this.to,
+    required this.progress,
+  }) : assert(progress >= 0 && progress <= 1);
+
+  /// Actions at the initial endpoint.
+  final List<GlassBarItem> from;
+
+  /// Actions at the final endpoint.
+  final List<GlassBarItem> to;
+
+  /// Page-owned progress in the inclusive range zero to one.
+  final double progress;
+}
+
 /// What a single route contributes to the pinned navigation chrome.
 ///
 /// Created by [GlassAppBar.pinned] bars and handed to the enclosing
@@ -27,6 +48,7 @@ class GlassNavBarRegistration {
   /// Creates a registration describing one route's pinned bar chrome.
   const GlassNavBarRegistration({
     required this.actions,
+    this.actionsTransition,
     this.leading = const <GlassBarItem>[],
     required this.showsBackButton,
     this.onBack,
@@ -59,6 +81,32 @@ class GlassNavBarRegistration {
 
   /// The trailing cluster items for this route.
   final List<GlassBarItem> actions;
+
+  /// Optional same-page action morph, used only while navigation is settled.
+  final GlassBarActionTransition? actionsTransition;
+
+  /// A local action endpoint with all other chrome retained.
+  GlassNavBarRegistration withActions(List<GlassBarItem> items) =>
+      GlassNavBarRegistration(
+        actions: items,
+        leading: leading,
+        showsBackButton: showsBackButton,
+        onBack: onBack,
+        buttonSettings: buttonSettings,
+        buttonSize: buttonSize,
+        toolbarHeight: toolbarHeight,
+        horizontalInset: horizontalInset,
+        platformViewBackdrop: platformViewBackdrop,
+        largeTitleController: largeTitleController,
+        stripRowTop: stripRowTop,
+        title: title,
+        titleContentKey: titleContentKey,
+        titleTransitionBuilder: titleTransitionBuilder,
+        // Local edits preserve business identity, unlike route slot matching.
+        itemMatching: GlassBarItemMatching.identity,
+        contentTransition: contentTransition,
+        routeDrivenTransitions: routeDrivenTransitions,
+      );
 
   /// The leading cluster items for this route, excluding the back button.
   ///

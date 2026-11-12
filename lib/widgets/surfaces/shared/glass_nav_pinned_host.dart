@@ -260,6 +260,7 @@ class GlassNavPinnedState {
     required this.coverage,
     required this.settled,
     this.popping = false,
+    this.directProgress = false,
     required this.topRoute,
     this.transition = GlassEffectTransition.materialize,
     this.crossFade = false,
@@ -302,6 +303,33 @@ class GlassNavPinnedState {
   /// Route-driven registrations leave this false, keeping both endpoints
   /// fixed so reversing the route retraces its glass and foreground geometry.
   final bool popping;
+
+  /// Local gestures supply geometry progress directly, without a second spring.
+  final bool directProgress;
+
+  /// Resolves only the trailing actions' local clock. Route transitions,
+  /// coverage and presented sheets keep their existing rendering path.
+  GlassNavPinnedState get actionState {
+    final local = to.actionsTransition;
+    if (local == null || !settled || coverage != 0 || presenting != null) {
+      return this;
+    }
+    final p = local.progress;
+    final start = to.withActions(local.from);
+    final end = to.withActions(local.to);
+    final endpoint = p == 0 ? start : end;
+    return GlassNavPinnedState(
+      from: p == 0 || p == 1 ? endpoint : start,
+      to: p == 0 || p == 1 ? endpoint : end,
+      progress: p == 0 || p == 1 ? 1 : p,
+      coverage: coverage,
+      settled: p == 0 || p == 1,
+      topRoute: topRoute,
+      transition: transition,
+      holdForSheet: holdForSheet,
+      directProgress: true,
+    );
+  }
 
   /// [progress] along the forward choreography — mirrored on a pop.
   double get flowProgress => popping ? 1.0 - progress : progress;
@@ -436,7 +464,7 @@ class GlassNavPinnedHost extends StatelessWidget {
           LayoutId(
             id: side,
             child: _PinnedSide(
-              state: state,
+              state: side == _BarSide.trailing ? state.actionState : state,
               titleMetrics: titleMetrics[side],
               groupsFor: (context, registration) => groupGlassNavBarItems(
                 _itemsFor(context, state, registration, side),
@@ -578,7 +606,7 @@ class GlassNavPinnedHost extends StatelessWidget {
             controller: state.to.largeTitleController,
             collapses: false,
             child: _PinnedSide(
-              state: state,
+              state: state.actionState,
               groupsFor: stripGroups,
               anchoredAtStart: true,
               axis: Axis.vertical,
@@ -602,7 +630,7 @@ class GlassNavPinnedHost extends StatelessWidget {
             controller: state.to.largeTitleController,
             child: Center(
               child: _PinnedSide(
-                state: state,
+                state: state.actionState,
                 groupsFor: rowGroups,
                 anchoredAtStart: textDirection == TextDirection.rtl,
                 scaleAlignment: AlignmentDirectional.centerEnd,
@@ -1099,9 +1127,12 @@ class _PinnedSide extends StatelessWidget {
         presenting == null || (group != null && group.contains(presenting));
 
     // Shells move between their places on the clock their contents morph on.
-    final positionT = GlassNavMorphCurve.instance
-        .transform(GlassNavPinnedMetrics.morphProgressAt(state.flowProgress))
-        .clamp(0.0, 1.0);
+    final positionT = state.directProgress
+        ? state.flowProgress
+        : GlassNavMorphCurve.instance
+            .transform(
+                GlassNavPinnedMetrics.morphProgressAt(state.flowProgress))
+            .clamp(0.0, 1.0);
 
     // A group only one route has buds out of a neighbour both routes have,
     // as iOS 27 grows it out of the shell beside it, and merges back into it
@@ -2402,8 +2433,11 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // the morph spring for the full length of the route transition and settle
     // with it. The spring's excursions are not walked in width — the
     // overshoot becomes the gel squeeze below, so layout takes the clamp.
-    final morphT = GlassNavPinnedMetrics.morphProgressAt(p);
-    final springT = GlassNavMorphCurve.instance.transform(morphT);
+    final morphT =
+        state.directProgress ? p : GlassNavPinnedMetrics.morphProgressAt(p);
+    final springT = state.directProgress
+        ? p
+        : GlassNavMorphCurve.instance.transform(morphT);
     final clampedT = springT.clamp(0.0, 1.0);
 
     final slots = matchGlassNavActions(
@@ -2430,7 +2464,11 @@ class _PinnedGroupState extends State<_PinnedGroup> {
         state.to.contentTransition == GlassBarContentTransition.crossFade;
     final changes =
         structuralChange || (!contentOnly && slots.any((s) => s.crossFades));
-    final morphScale = !morphing || !changes || state.settled || state.crossFade
+    final morphScale = !morphing ||
+            !changes ||
+            state.settled ||
+            state.crossFade ||
+            state.directProgress
         ? 1.0
         : 1.0 +
             GlassNavPinnedMetrics.swellPulseAt(morphT) -
@@ -2505,7 +2543,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
 
     // Cross-fade window for a matched item whose content changed, and
     // entering / exiting items during a morph.
-    final q = state.crossFade || contentOnly
+    final q = state.directProgress || state.crossFade || contentOnly
         ? p.clamp(0.0, 1.0)
         : ((morphT - GlassNavPinnedMetrics.crossFadeStart) /
                 (GlassNavPinnedMetrics.crossFadeEnd -
@@ -2521,14 +2559,20 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // contents are not glass, so filtering them is safe — the shell itself
     // never animates opacity. Groups without a destination dissolve as a
     // unit instead, with no independent glyph blur.
-    final outSigma =
-        state.settled || state.crossFade || contentOnly || noDestination
-            ? 0.0
-            : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
-    final inSigma =
-        state.settled || state.crossFade || contentOnly || noDestination
-            ? 0.0
-            : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
+    final outSigma = state.directProgress ||
+            state.settled ||
+            state.crossFade ||
+            contentOnly ||
+            noDestination
+        ? 0.0
+        : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
+    final inSigma = state.directProgress ||
+            state.settled ||
+            state.crossFade ||
+            contentOnly ||
+            noDestination
+        ? 0.0
+        : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
 
     // In the plain cross-fade or when dissolving without a destination,
     // glyphs fade with their group's glass.

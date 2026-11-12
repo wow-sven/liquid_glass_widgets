@@ -178,6 +178,7 @@ class GlassPinnedBarChrome extends StatefulWidget {
     required this.builder,
     this.leading = const <GlassBarItem>[],
     this.actions = const <GlassBarItem>[],
+    this.actionsTransition,
     this.backButton = true,
     this.leadingItemsSupplementBackButton = false,
     this.onBack,
@@ -220,6 +221,10 @@ class GlassPinnedBarChrome extends StatefulWidget {
   /// Defaults to empty, which still pins: an empty list opts the route into
   /// the shell with a back button and no capsule, it does not opt out.
   final List<GlassBarItem> actions;
+
+  /// Page-controlled action endpoints, independent of route navigation.
+  /// Requires a pinned navigation shell; unpinned bars render [actions].
+  final GlassBarActionTransition? actionsTransition;
 
   /// Whether the automatic back button is offered to the shell.
   ///
@@ -440,6 +445,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
       route,
       GlassNavBarRegistration(
         actions: widget.actions,
+        actionsTransition: widget.actionsTransition,
         leading: widget.leading,
         showsBackButton: _showsBack,
         onBack: widget.onBack,

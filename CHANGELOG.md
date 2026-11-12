@@ -1,5 +1,9 @@
 # Unreleased
 
+- Add page-controlled, reversible pinned action transitions. Local gestures
+  interpolate capsule geometry directly and retain action identity; route
+  navigation keeps its existing clock and takes priority.
+
 - Keep the app header beneath a sheet-local navigation shell's modal barrier
   until its reverse transition finishes, including nested presentations.
 
