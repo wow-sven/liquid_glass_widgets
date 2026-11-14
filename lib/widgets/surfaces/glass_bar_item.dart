@@ -6,6 +6,45 @@ import '../overlays/glass_modal_sheet.dart';
 import 'glass_navigation_shell.dart';
 import 'glass_vertical_bar.dart';
 
+/// Presents one foreground endpoint using the shared navigation progress.
+/// The builder owns its opacity and motion; the glass surface is unaffected.
+typedef GlassBarContentTransitionBuilder = Widget Function(
+  BuildContext context,
+  Widget child,
+  double progress,
+  bool incoming,
+);
+
+/// Builds one shared foreground for two compatible custom contents.
+/// Both items opt in; the destination builder receives the endpoint widgets.
+/// Return null for incompatible contents to retain their default transition.
+/// The result owns foreground motion and is measured at the destination extent;
+/// the shell continues measuring both endpoints and owns geometry and input.
+typedef GlassBarPairedContentTransitionBuilder = Widget? Function(
+  BuildContext context,
+  Widget from,
+  Widget to,
+  double progress,
+);
+
+/// How unrelated routes pair their bar items and glass groups.
+enum GlassBarItemMatching {
+  /// Prefer business identifiers, then fall back to position for anonymous items.
+  identity,
+
+  /// Retain presentation slots from the anchored edge, regardless of business ID.
+  position,
+}
+
+/// How a retained bar item changes its foreground content.
+enum GlassBarContentTransition {
+  /// Native gel swell and glyph blur, including content-only changes.
+  gel,
+
+  /// Cross-fade content and adapt width; reserve gel for structural changes.
+  crossFade,
+}
+
 /// How an item's glass background is drawn.
 ///
 /// Mirrors the two booleans iOS 26 added to `UIBarButtonItem`:
@@ -110,6 +149,7 @@ sealed class GlassBarItem {
     required Widget icon,
     required VoidCallback onTap,
     Object? id,
+    Object? contentKey,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -138,8 +178,12 @@ sealed class GlassBarItem {
   /// node (replacing [child]'s own text semantics).
   const factory GlassBarItem.custom({
     required Widget child,
+    double? extent,
     VoidCallback? onTap,
     Object? id,
+    Object? contentKey,
+    GlassBarContentTransitionBuilder? transitionBuilder,
+    GlassBarPairedContentTransitionBuilder? pairedTransitionBuilder,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -169,6 +213,7 @@ sealed class GlassBarItem {
     double? menuHeight,
     LiquidGlassSettings? menuSettings,
     Object? id,
+    Object? contentKey,
     String? label,
     GlassBarItemBackground background,
     Color? tintColor,
@@ -205,6 +250,7 @@ sealed class GlassBarItem {
     required Widget icon,
     required void Function(GlassMorphAnchor? anchor) onPresent,
     Object? id,
+    Object? contentKey,
     String? label,
     bool enabled,
     GlassBarItemBackground background,
@@ -231,6 +277,7 @@ sealed class GlassBarActionItem extends GlassBarItem {
   const GlassBarActionItem({
     required this.onTap,
     this.id,
+    this.contentKey,
     this.label,
     this.enabled = true,
     this.background = GlassBarItemBackground.shared,
@@ -255,6 +302,11 @@ sealed class GlassBarActionItem extends GlassBarItem {
   ///
   /// See [GlassBarItem.icon] for the matching rules.
   final Object? id;
+
+  /// Value identity of the visible foreground, independent of the business ID
+  /// and callback. Equal non-null keys suppress redundant content transitions.
+  /// Include every property affecting the foreground; omit for arbitrary views.
+  final Object? contentKey;
 
   /// Optional semantic label.
   ///
@@ -323,6 +375,7 @@ final class GlassBarIconItem extends GlassBarActionItem {
     required this.icon,
     required super.onTap,
     super.id,
+    super.contentKey,
     super.label,
     super.enabled,
     super.background,
@@ -346,14 +399,35 @@ final class GlassBarCustomItem extends GlassBarActionItem {
   /// Creates a custom item. Prefer [GlassBarItem.custom].
   const GlassBarCustomItem({
     required this.child,
+    this.extent,
     VoidCallback? onTap,
     super.id,
+    super.contentKey,
+    this.transitionBuilder,
+    this.pairedTransitionBuilder,
     super.label,
     super.enabled,
     super.background,
     super.tintColor,
     super.axisBehavior,
   }) : super(onTap: onTap ?? GlassBarActionItem._noOp);
+
+  /// Optional replacement effect for changed, matched foregrounds.
+  /// Both endpoints must opt in; mixed content keeps the default dissolve.
+  /// Equal [contentKey] values skip the effect. Glass-owning content keeps its
+  /// surface-specific dissolve instead. A pair uses its incoming builder.
+  final GlassBarContentTransitionBuilder? transitionBuilder;
+
+  /// Optional coordinated replacement for composite foregrounds. Unlike
+  /// [transitionBuilder], this paints the matched pair once, allowing unchanged
+  /// subcontent and a shared selection indicator to remain visible. It also
+  /// receives equal content keys, since a stable composite can change internally.
+  final GlassBarPairedContentTransitionBuilder? pairedTransitionBuilder;
+
+  /// Declared main-axis size of the custom foreground, when fixed.
+  /// Pinned layout uses this size and treats a single item no wider than one
+  /// button as compact. Null uses intrinsic layout and wide-content motion.
+  final double? extent;
 
   /// The widget rendered inside the cluster, measured at its intrinsic width.
   final Widget child;
@@ -375,6 +449,7 @@ final class GlassBarMenuItem extends GlassBarActionItem {
     this.menuHeight,
     this.menuSettings,
     super.id,
+    super.contentKey,
     super.label,
     super.background,
     super.tintColor,
@@ -418,6 +493,7 @@ final class GlassBarSheetItem extends GlassBarActionItem {
     required this.icon,
     required this.onPresent,
     super.id,
+    super.contentKey,
     super.label,
     super.enabled,
     super.background,

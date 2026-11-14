@@ -145,7 +145,12 @@ export 'widgets/surfaces/glass_bar_item.dart';
 export 'widgets/surfaces/glass_navigation_shell.dart'
     show
         GlassNavigationShell,
+        GlassHeaderMotion,
+        GlassEmptyGroupTransition,
+        GlassForegroundTransition,
+        GlassNavigationBranch,
         GlassNavigationShellState,
+        GlassNavTitleTransitionBuilder,
         GlassNavBarRegistration;
 export 'widgets/surfaces/glass_navigation_stack.dart';
 // Geometry a bar that is not a GlassAppBar aligns its in-route chrome to.

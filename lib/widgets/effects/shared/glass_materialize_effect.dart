@@ -22,6 +22,10 @@ import '../../shared/glass_accessibility_scope.dart';
 /// transition rewinds the same choreography rather than snapping to the
 /// other profile.
 enum GlassMaterializeProfile {
+  /// Fade the whole surface through its visibility channel, including content.
+  /// No extra foreground fade or blur; geometry supplies the motion.
+  uniform,
+
   /// The subtree is appearing: glass resolves first, content sharpens last.
   entrance,
 
@@ -142,6 +146,11 @@ class GlassMaterializeEffect extends StatelessWidget {
       scale = 1.0;
     } else {
       switch (profile) {
+        case GlassMaterializeProfile.uniform:
+          glass = t;
+          // Surface renderers already multiply the child by glass visibility.
+          // Applying t to the content channel too would square the fade.
+          content = 1.0;
         case GlassMaterializeProfile.entrance:
           glass = GlassMaterializeChoreography.entranceGlass.transform(t);
           content = GlassMaterializeChoreography.entranceContent.transform(t);

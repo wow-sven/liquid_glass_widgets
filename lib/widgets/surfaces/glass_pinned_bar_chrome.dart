@@ -33,6 +33,7 @@ class GlassPinnedBarChromeData {
     required this.leading,
     required this.actions,
     required this.hoisted,
+    this.title,
     this.presenting,
     this.inStrip = false,
   });
@@ -62,6 +63,10 @@ class GlassPinnedBarChromeData {
   /// the top-trailing corner of the content beside the title.
   final List<Widget> actions;
 
+  /// Space between entries in [actions], matching the hoisted groups.
+  /// Each entry is a complete capsule; this is not spacing within a capsule.
+  double get actionGroupSpacing => GlassNavPinnedMetrics.groupGap;
+
   /// Whether the shell has taken this route's chrome.
   ///
   /// False while the bar still draws it, and true once the shell has both
@@ -72,6 +77,9 @@ class GlassPinnedBarChromeData {
   /// [leading] and [actions] already account for all of this — read it only to
   /// substitute your own chrome for the package's.
   final bool hoisted;
+
+  /// The declared title, or an unpainted placeholder when the shell owns it.
+  final Widget? title;
 
   /// The [GlassBarItem.sheet] whose sheet is up out of the hoisted chrome, or
   /// null.
@@ -175,14 +183,24 @@ class GlassPinnedBarChrome extends StatefulWidget {
     this.leadingItemsSupplementBackButton = false,
     this.onBack,
     this.buttonSize,
+    this.sharedButtonSize,
+    this.headerMotion = const GlassHeaderMotion(),
     this.toolbarHeight,
     this.buttonSettings,
     this.horizontalInset,
     this.platformViewBackdrop = false,
     this.largeTitleController,
     this.stripRowTop,
+    this.title,
+    this.titleContentKey,
+    this.titleSpacing = EdgeInsetsDirectional.zero,
+    this.titleTransitionBuilder,
+    this.itemMatching = GlassBarItemMatching.identity,
+    this.contentTransition = GlassBarContentTransition.gel,
+    this.routeDrivenTransitions = false,
     this.enabled = true,
   })  : assert(buttonSize == null || buttonSize > 0),
+        assert(sharedButtonSize == null || sharedButtonSize > 0),
         assert(toolbarHeight == null || toolbarHeight >= 0);
 
   /// Builds the bar from the chrome resolved for this frame.
@@ -222,14 +240,15 @@ class GlassPinnedBarChrome extends StatefulWidget {
   /// `context.pop()`.
   final VoidCallback? onBack;
 
-  /// Diameter of standalone bar buttons (the automatic back button and
-  /// non-shared items), in logical pixels.
-  ///
-  /// Defaults to [GlassNavPinnedMetrics.backDiameter] (`44.0`) when null.
-  /// Shared multi-item capsules scale proportionally (`buttonSize + 2.0`),
-  /// and custom items ([GlassBarItem.custom]) are constrained to this height
-  /// in a horizontal bar.
+  /// Diameter of standalone buttons. By default shared capsules use this
+  /// diameter plus two logical pixels, as on [GlassAppBar.pinned].
   final double? buttonSize;
+
+  /// Overrides the height of shared horizontal capsules.
+  final double? sharedButtonSize;
+
+  /// Optional presentation used while this header is hoisted.
+  final GlassHeaderMotion headerMotion;
 
   /// Height of the toolbar row in which the pinned chrome sits, in logical
   /// pixels.
@@ -281,6 +300,29 @@ class GlassPinnedBarChrome extends StatefulWidget {
   /// it, and the hand-over between the two is invisible. Elsewhere it is not
   /// read.
   final double? stripRowTop;
+
+  /// Optional compact title hoisted with the horizontal navigation chrome.
+  /// Use the resolved title slot in the bar builder to avoid drawing it twice.
+  final Widget? title;
+
+  /// Visible title identity. Equal non-null values retain the title unchanged.
+  final Object? titleContentKey;
+
+  /// Horizontal clearance between the hoisted title and a non-empty control group.
+  final EdgeInsetsDirectional titleSpacing;
+
+  /// Optional title presentation driven by the shell's exact route progress.
+  final GlassNavTitleTransitionBuilder? titleTransitionBuilder;
+
+  /// Matching policy for presentation slots across different routes.
+  final GlassBarItemMatching itemMatching;
+
+  /// Foreground replacement policy, separate from glass splitting and merging.
+  final GlassBarContentTransition contentTransition;
+
+  /// Follow the route's exact progress in both directions, including cancelled
+  /// back gestures. Disables the native gesture hold and independently timed gel.
+  final bool routeDrivenTransitions;
 
   /// Whether this bar participates in pinning at all.
   ///
@@ -379,8 +421,8 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     // offstage once before the transition starts, and `offstage` does not
     // notify dependents when it flips back — so skipping those builds would
     // strand the route unregistered for the whole transition. Which route is
-    // on top is decided by the shell's ordering instead. (Inactive branches of
-    // a nested navigator are a known gap.)
+    // on top is decided by the shell's navigation tree instead. Retained tab
+    // containers declare selection through GlassNavigationBranch.
     // A bar in a presented route — a modal sheet's — is inside the
     // presentation, which comes up over the stack the shell pins across: the
     // presentation is its container, and the bar draws its own chrome.
@@ -409,17 +451,39 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
       route,
       GlassNavBarRegistration(
         actions: widget.actions,
+        headerMotion: widget.headerMotion,
         leading: widget.leading,
         showsBackButton: _showsBack,
         onBack: widget.onBack,
         buttonSize: widget.buttonSize,
+        sharedButtonSize: widget.sharedButtonSize,
         toolbarHeight: widget.toolbarHeight,
         buttonSettings: widget.buttonSettings,
         horizontalInset: widget.horizontalInset,
         platformViewBackdrop: widget.platformViewBackdrop,
         largeTitleController: widget.largeTitleController,
         stripRowTop: widget.stripRowTop,
+        title: widget.title == null
+            ? null
+            : InheritedTheme.captureAll(
+                context,
+                MediaQuery(
+                  data: MediaQuery.of(context),
+                  child: Directionality(
+                    textDirection: Directionality.of(context),
+                    child: widget.title!,
+                  ),
+                ),
+              ),
+        titleContentKey: widget.titleContentKey,
+        titleSpacing: widget.titleSpacing,
+        titleTransitionBuilder: widget.titleTransitionBuilder,
+        itemMatching: widget.itemMatching,
+        contentTransition: widget.contentTransition,
+        routeDrivenTransitions: widget.routeDrivenTransitions,
       ),
+      owner: this,
+      active: GlassNavigationBranch.isActiveOf(context),
     );
   }
 
@@ -468,7 +532,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     final shell = _shell;
     final route = _route;
     if (shell != null && route != null) {
-      shell.unregister(route);
+      shell.unregister(route, owner: this);
     }
   }
 
@@ -669,12 +733,12 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
   ) {
     return SizedBox(
       width: item is GlassBarCustomItem
-          ? (group.axis == Axis.vertical ? group.crossExtent : null)
+          ? (group.axis == Axis.vertical ? group.crossExtent : item.extent)
           : (group.axis == Axis.horizontal
               ? group.slotExtent
               : group.crossExtent),
       height: item is GlassBarCustomItem
-          ? (group.axis == Axis.horizontal ? group.crossExtent : null)
+          ? (group.axis == Axis.horizontal ? group.crossExtent : item.extent)
           : (group.axis == Axis.vertical
               ? group.slotExtent
               : group.crossExtent),
@@ -693,6 +757,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     final groups = groupGlassNavBarItems(
       widget.leading,
       buttonSize: widget.buttonSize,
+      sharedButtonSize: widget.sharedButtonSize,
     );
     final slot = <Widget>[
       if (_showsBack) _buildBackButton(context),
@@ -712,6 +777,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
     final groups = groupGlassNavBarItems(
       widget.actions,
       buttonSize: widget.buttonSize,
+      sharedButtonSize: widget.sharedButtonSize,
     );
     return [for (final group in groups) _buildGroup(group)];
   }
@@ -731,6 +797,7 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
           .toList(),
       axis: vertical ? Axis.vertical : Axis.horizontal,
       buttonSize: vertical ? null : widget.buttonSize,
+      sharedButtonSize: vertical ? null : widget.sharedButtonSize,
     );
   }
 
@@ -864,6 +931,15 @@ class _GlassPinnedBarChromeState extends State<GlassPinnedBarChrome> {
         leading: verticalBar == null ? _buildLeading(context) : null,
         actions: verticalBar == null ? _buildActions() : _buildRowActions(),
         hoisted: _handedOver,
+        title: widget.title == null
+            ? null
+            : Visibility(
+                visible: !_handedOver || verticalBar != null,
+                maintainSize: true,
+                maintainState: true,
+                maintainAnimation: true,
+                child: widget.title!,
+              ),
         presenting: _presenting,
         inStrip: verticalBar != null,
       ),

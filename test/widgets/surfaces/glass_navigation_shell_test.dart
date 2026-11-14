@@ -876,6 +876,30 @@ void main() {
       expect(find.text('Detail'), findsOneWidget);
     });
 
+    testWidgets(
+        'gesture completion restores controls without an animation tick',
+        (tester) async {
+      var backs = 0;
+      await tester.pumpWidget(
+        shellApp(const _Screen(title: 'Root', actions: [])),
+      );
+      await settle(tester);
+      await _push(
+        tester,
+        _Screen(title: 'Detail', actions: const [], onBack: () => backs++),
+      );
+      await settle(tester);
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.didStartUserGesture();
+      await tester.pump();
+      await tester.tap(pinnedBack(), warnIfMissed: false);
+      expect(backs, 0);
+      navigator.didStopUserGesture();
+      await tester.pumpAndSettle();
+      await tester.tap(pinnedBack());
+      expect(backs, 1);
+    });
+
     testWidgets('pinned actions are inert mid-transition', (tester) async {
       var taps = 0;
       await tester.pumpWidget(

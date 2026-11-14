@@ -299,6 +299,8 @@ class GlassNavPinnedState {
   /// the roles, so the swell leads and the bounce lands with the page in
   /// both directions. Rendering the push in reverse instead put all the
   /// motion at the wrong end of a pop.
+  /// Route-driven registrations leave this false, keeping both endpoints
+  /// fixed so reversing the route retraces its glass and foreground geometry.
   final bool popping;
 
   /// [progress] along the forward choreography — mirrored on a pop.
@@ -310,7 +312,8 @@ class GlassNavPinnedState {
   /// The chrome the forward choreography arrives at, honouring [popping].
   GlassNavBarRegistration get flowTo => popping ? from : to;
 
-  /// The topmost registered route, used for the default back action.
+  /// The active header's declaring route, used for the default back action.
+  /// This can be a nested route while an ancestor drives [progress].
   final ModalRoute<dynamic> topRoute;
 
   /// How clusters that appear or disappear outright transition.
@@ -416,20 +419,31 @@ class GlassNavPinnedHost extends StatelessWidget {
         GlassNavPinnedMetrics.toolbarHeight;
     final statusRow = StatusBarRow.of(context);
 
-    Widget chrome = Stack(
-      clipBehavior: Clip.none,
+    final titleMetrics = {
+      for (final side in _BarSide.values) side: _TitleSideMetrics()
+    };
+    final incoming = state.settled ||
+        state.flowProgress >= .5 ||
+        (state.flowFrom.titleContentKey != null &&
+            state.flowFrom.titleContentKey == state.flowTo.titleContentKey);
+    Widget chrome = CustomMultiChildLayout(
+      delegate: _PinnedBarLayout(
+        textDirection: textDirection,
+        metrics: titleMetrics,
+        incoming: incoming,
+        spacing: (incoming ? state.flowTo : state.flowFrom).titleSpacing,
+      ),
       children: [
         for (final side in _BarSide.values)
-          Positioned.directional(
-            textDirection: textDirection,
-            start: side == _BarSide.leading ? 0 : null,
-            end: side == _BarSide.trailing ? 0 : null,
-            top: 0,
+          LayoutId(
+            id: side,
             child: _PinnedSide(
               state: state,
+              titleMetrics: titleMetrics[side],
               groupsFor: (context, registration) => groupGlassNavBarItems(
                 _itemsFor(context, state, registration, side),
                 buttonSize: registration.buttonSize,
+                sharedButtonSize: registration.sharedButtonSize,
               ),
               anchoredAtStart: (side == _BarSide.leading) ==
                   (textDirection == TextDirection.ltr),
@@ -440,6 +454,10 @@ class GlassNavPinnedHost extends StatelessWidget {
               minCross: statusRow == null ? barHeight : 0.0,
             ),
           ),
+        LayoutId(
+          id: #title,
+          child: GlassNavPinnedTitle(state: state),
+        ),
       ],
     );
 
@@ -539,6 +557,7 @@ class GlassNavPinnedHost extends StatelessWidget {
                   .where((item) => _goesInStrip(item, vertical: false))
                   .toList(),
               buttonSize: registration.buttonSize,
+              sharedButtonSize: registration.sharedButtonSize,
             ),
         ];
 
@@ -640,6 +659,7 @@ class GlassNavBarGroup {
     required this.background,
     this.axis = Axis.horizontal,
     this.buttonSize,
+    this.sharedButtonSize,
   });
 
   /// The items sharing this group's background, leading to trailing.
@@ -652,10 +672,11 @@ class GlassNavBarGroup {
   /// iPhone Duo's vertical strip.
   final Axis axis;
 
-  /// Optional diameter override for standalone buttons in a horizontal bar.
-  ///
-  /// Defaults to [GlassNavPinnedMetrics.backDiameter] (`44.0`) when null.
+  /// Diameter of standalone buttons.
   final double? buttonSize;
+
+  /// Optional independent shared capsule height.
+  final double? sharedButtonSize;
 
   /// Whether a glass shell is drawn behind [items].
   bool get glass =>
@@ -668,15 +689,17 @@ class GlassNavBarGroup {
   /// A group that shares with nothing is the circular button iOS 26 draws
   /// for a lone bar item — at that height the capsule's [borderRadius] is
   /// clamped to exactly half the box, so the rounded rectangle *is* a circle.
-  /// A shared capsule keeps the 2pt taller icon-slot height it has always had.
+  /// A shared capsule defaults to two points taller unless explicitly sized.
   /// In the strip every control is [GlassVerticalBarMetrics.controlExtent]
   /// wide.
   double get crossExtent {
     if (axis == Axis.vertical) return GlassVerticalBarMetrics.controlExtent;
     final diameter = buttonSize ?? GlassNavPinnedMetrics.backDiameter;
     return background == GlassBarItemBackground.shared
-        ? diameter +
-            (GlassNavPinnedMetrics.slot - GlassNavPinnedMetrics.backDiameter)
+        ? sharedButtonSize ??
+            diameter +
+                (GlassNavPinnedMetrics.slot -
+                    GlassNavPinnedMetrics.backDiameter)
         : diameter;
   }
 
@@ -723,6 +746,7 @@ List<GlassNavBarGroup> groupGlassNavBarItems(
   List<GlassBarItem> items, {
   Axis axis = Axis.horizontal,
   double? buttonSize,
+  double? sharedButtonSize,
 }) {
   final groups = <GlassNavBarGroup>[];
   var run = <GlassBarActionItem>[];
@@ -734,6 +758,7 @@ List<GlassNavBarGroup> groupGlassNavBarItems(
       background: GlassBarItemBackground.shared,
       axis: axis,
       buttonSize: buttonSize,
+      sharedButtonSize: sharedButtonSize,
     ));
     run = <GlassBarActionItem>[];
   }
@@ -892,6 +917,25 @@ List<GlassNavBarGroup> fitGlassNavStripGroups(
   ];
 }
 
+({double widthProgress, double visibility})? _emptyGroupTransition(
+    BuildContext context,
+    GlassNavPinnedState state,
+    GlassNavBarGroup? from,
+    GlassNavBarGroup? to) {
+  if ((from == null) == (to == null) ||
+      state.crossFade ||
+      state.transition == GlassEffectTransition.identity ||
+      GlassAccessibilityData.of(context).reduceMotion ||
+      MediaQuery.disableAnimationsOf(context)) {
+    return null;
+  }
+  final group = (from ?? to)!;
+  if (!group.glass) return null;
+  final motion = (from == null ? state.flowTo : state.flowFrom).headerMotion;
+  return motion.emptyGroupTransition
+      ?.call(group.items, group.crossExtent, state.flowProgress, from == null);
+}
+
 /// How much of a group is drawn at [state]'s progress: its materialize phase,
 /// or 1.0 for a group both routes have.
 ///
@@ -907,6 +951,8 @@ double _groupPhaseAt(
 ) {
   final sides = _resolveGroupSides(from, to, state.flowProgress);
   if (sides.from == null && sides.to == null) return 0.0;
+  final frame = _emptyGroupTransition(context, state, sides.from, sides.to);
+  if (frame != null) return frame.visibility;
   return GlassNavPinnedHost.phaseFor(
     context,
     state,
@@ -990,9 +1036,11 @@ class _PinnedSide extends StatelessWidget {
     required this.coverageScale,
     this.axis = Axis.horizontal,
     this.minCross = 0.0,
+    this.titleMetrics,
   });
 
   final GlassNavPinnedState state;
+  final _TitleSideMetrics? titleMetrics;
 
   /// The groups this run draws for one route, in reading order.
   final List<GlassNavBarGroup> Function(
@@ -1047,6 +1095,7 @@ class _PinnedSide extends StatelessWidget {
         fromGroups,
         toGroups,
         anchoredAtStart: fromStart,
+        matchByPosition: state.to.itemMatching == GlassBarItemMatching.position,
       ))
         (
           from: pair.from,
@@ -1133,14 +1182,19 @@ class _PinnedSide extends StatelessWidget {
           );
     final reshaping = partners.values.whereType<_Shell>().toSet();
 
+    titleMetrics?.groups.clear();
+    final measureTitles = titleMetrics != null &&
+        (state.flowFrom.title != null || state.flowTo.title != null);
     final children = <Widget>[];
     for (final shell in shells) {
       if (!holdsPresenting(shell.to)) continue;
+      final metrics = measureTitles ? _TitleGroupMetrics() : null;
+      if (metrics != null) titleMetrics!.groups.add(metrics);
       final partner = partners[shell];
       final Widget group;
       if (partner == null) {
         final phase = _groupPhaseAt(context, state, shell.from, shell.to);
-        if (phase <= 0.0) continue;
+        if (phase <= 0.0 && !measureTitles) continue;
         // The room leads the glass: a shell has made most of its room while
         // it is still faint, so it is never drawn over a neighbour at any
         // strength that shows.
@@ -1152,13 +1206,17 @@ class _PinnedSide extends StatelessWidget {
           fromRoom: room,
           toRoom: room,
           restCross: restCrossOf(shell),
-          child: _PinnedGroup(
-            state: state,
-            from: shell.from,
-            to: shell.to,
-            anchoredAtStart: anchoredAtStart,
-            reshapes: reshaping.contains(shell),
-            grouped: reshaping.contains(shell),
+          child: Offstage(
+            offstage: phase <= 0.0,
+            child: _PinnedGroup(
+              state: state,
+              titleMetrics: metrics,
+              from: shell.from,
+              to: shell.to,
+              anchoredAtStart: anchoredAtStart,
+              reshapes: reshaping.contains(shell),
+              grouped: reshaping.contains(shell),
+            ),
           ),
         );
       } else {
@@ -1177,13 +1235,17 @@ class _PinnedSide extends StatelessWidget {
               ? shell.toPlace! > partner.toPlace!
               : shell.fromPlace! > partner.fromPlace!,
           restCross: restCrossOf(shell),
-          child: _PinnedGroup(
-            state: state,
-            from: shell.from,
-            to: shell.to,
-            anchoredAtStart: anchoredAtStart,
-            buds: true,
-            grouped: true,
+          child: Offstage(
+            offstage: false,
+            child: _PinnedGroup(
+              state: state,
+              titleMetrics: metrics,
+              from: shell.from,
+              to: shell.to,
+              anchoredAtStart: anchoredAtStart,
+              buds: true,
+              grouped: true,
+            ),
           ),
         );
       }
@@ -1577,6 +1639,7 @@ List<({GlassNavBarGroup? from, GlassNavBarGroup? to})> matchGlassNavGroups(
   List<GlassNavBarGroup> from,
   List<GlassNavBarGroup> to, {
   bool anchoredAtStart = false,
+  bool matchByPosition = false,
 }) {
   int slotOf(int index, int length) =>
       anchoredAtStart ? index : length - 1 - index;
@@ -1588,7 +1651,11 @@ List<({GlassNavBarGroup? from, GlassNavBarGroup? to})> matchGlassNavGroups(
   // can take a partner another group's items have already claimed.
   for (var t = 0; t < to.length; t++) {
     for (var f = 0; f < from.length; f++) {
-      if (usedFrom.contains(f) || !to[t].items.any(from[f].contains)) continue;
+      if (matchByPosition ||
+          usedFrom.contains(f) ||
+          !to[t].items.any(from[f].contains)) {
+        continue;
+      }
       matches[t] = f;
       usedFrom.add(f);
       break;
@@ -1640,7 +1707,9 @@ class GlassNavActionSlot {
     final to = toItem;
     return from != null &&
         to != null &&
-        !_sameContent(from.content, to.content);
+        (from.contentKey != null && to.contentKey != null
+            ? from.contentKey != to.contentKey
+            : !_sameContent(from.content, to.content));
   }
 
   /// Whether two content widgets draw the same thing.
@@ -1681,6 +1750,7 @@ List<GlassNavActionSlot> matchGlassNavActions(
   List<GlassBarActionItem> from,
   List<GlassBarActionItem> to, {
   bool anchoredAtStart = false,
+  bool matchByPosition = false,
 }) {
   // Slot index counts from the anchored edge, because that is the edge the
   // cluster grows away from.
@@ -1692,7 +1762,7 @@ List<GlassNavActionSlot> matchGlassNavActions(
 
   int? takeMatch(GlassBarActionItem toItem, int toIndex) {
     // 1. Explicit identifier match, mirroring UIBarButtonItem.identifier.
-    if (toItem.id != null) {
+    if (!matchByPosition && toItem.id != null) {
       for (var i = 0; i < from.length; i++) {
         if (usedFrom.contains(i)) continue;
         if (from[i].id == toItem.id) return i;
@@ -1703,7 +1773,9 @@ List<GlassNavActionSlot> matchGlassNavActions(
     final wanted = slotOf(toIndex, to.length);
     for (var i = 0; i < from.length; i++) {
       if (usedFrom.contains(i)) continue;
-      if (from[i].id != null && from[i].id != toItem.id) continue;
+      if (!matchByPosition && from[i].id != null && from[i].id != toItem.id) {
+        continue;
+      }
       if (slotOf(i, from.length) == wanted) return i;
     }
     return null;
@@ -1777,8 +1849,11 @@ class _PinnedCluster extends MultiChildRenderObjectWidget {
     required this.crossExtent,
     required this.anchoredAtStart,
     this.axis = Axis.horizontal,
+    this.titleMetrics,
     required super.children,
   });
+
+  final _TitleGroupMetrics? titleMetrics;
 
   /// Per-slot placement in each cluster, indexed by slot.
   final List<_SlotOrder> orders;
@@ -1809,6 +1884,7 @@ class _PinnedCluster extends MultiChildRenderObjectWidget {
   @override
   RenderObject createRenderObject(BuildContext context) => _RenderPinnedCluster(
         orders: orders,
+        titleMetrics: titleMetrics,
         widthT: widthT,
         positionT: positionT,
         morphScale: morphScale,
@@ -1824,6 +1900,7 @@ class _PinnedCluster extends MultiChildRenderObjectWidget {
   ) {
     renderObject
       ..orders = orders
+      ..titleMetrics = titleMetrics
       ..widthT = widthT
       ..positionT = positionT
       ..morphScale = morphScale
@@ -1839,19 +1916,28 @@ class _RenderPinnedCluster extends RenderBox
         RenderBoxContainerDefaultsMixin<RenderBox, _ClusterParentData> {
   _RenderPinnedCluster({
     required List<_SlotOrder> orders,
+    _TitleGroupMetrics? titleMetrics,
     required double widthT,
     required double positionT,
     required double morphScale,
     required double crossExtent,
     required bool anchoredAtStart,
     required Axis axis,
-  })  : _orders = orders,
+  })  : _titleMetrics = titleMetrics,
+        _orders = orders,
         _widthT = widthT,
         _positionT = positionT,
         _morphScale = morphScale,
         _crossExtent = crossExtent,
         _anchoredAtStart = anchoredAtStart,
         _axis = axis;
+
+  _TitleGroupMetrics? _titleMetrics;
+  set titleMetrics(_TitleGroupMetrics? value) {
+    if (_titleMetrics == value) return;
+    _titleMetrics = value;
+    markNeedsLayout();
+  }
 
   List<_SlotOrder> _orders;
   set orders(List<_SlotOrder> value) {
@@ -1997,11 +2083,20 @@ class _RenderPinnedCluster extends RenderBox
 
     final fromTotal = layoutSide(from: true);
     final toTotal = layoutSide(from: false);
+    _titleMetrics
+      ?..from = fromTotal
+      ..to = toTotal;
 
     // The gel scales the box itself: the glass shell wrapping this cluster
     // re-renders at the true inflated size, and paint scales the children to
     // fill it, so shell and glyphs stretch as one body.
-    final width = lerpDouble(fromTotal, toTotal, _widthT)!;
+    // An absent endpoint supplies geometry only: one button-sized circle.
+    // Keep the title metrics above at zero so it never reserves an empty slot.
+    final width = lerpDouble(
+      fromTotal == 0 ? _crossExtent : fromTotal,
+      toTotal == 0 ? _crossExtent : toTotal,
+      _widthT,
+    )!;
     final scaled = _sized(width * _morphScale, _crossExtent * _morphScale);
     size = constraints.constrain(scaled);
     // The bar hosts this cluster in an unbounded row or column, so the
@@ -2072,7 +2167,7 @@ class _RenderPinnedCluster extends RenderBox
             (from ? toWidths[slot] : fromWidths[slot]) ??
             0.0;
       }
-      return total;
+      return total == 0 ? _crossExtent : total;
     }
 
     final width = lerpDouble(
@@ -2240,9 +2335,11 @@ class _PinnedGroup extends StatefulWidget {
     this.buds = false,
     this.reshapes = false,
     this.grouped = false,
+    this.titleMetrics,
   });
 
   final GlassNavPinnedState state;
+  final _TitleGroupMetrics? titleMetrics;
 
   /// This group on the outgoing route, or null if it only enters.
   final GlassNavBarGroup? from;
@@ -2344,6 +2441,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
       fromItems,
       toItems,
       anchoredAtStart: widget.anchoredAtStart,
+      matchByPosition: state.to.itemMatching == GlassBarItemMatching.position,
     );
 
     // The gel: a swell pulse inflates the whole shell early — height, radius
@@ -2356,37 +2454,34 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // frozen while its neighbours morph.
     final overshoot = (springT - 1.0).clamp(0.0, 1.0);
     final morphing = fromItems.isNotEmpty && toItems.isNotEmpty;
-    final changes = widget.reshapes ||
+    final structuralChange = widget.reshapes ||
         fromItems.length != toItems.length ||
-        slots.any((s) => s.isEnter || s.isExit || s.crossFades);
+        slots.any((s) => s.isEnter || s.isExit);
+    final contentOnly = !structuralChange &&
+        state.to.contentTransition == GlassBarContentTransition.crossFade;
+    final changes =
+        structuralChange || (!contentOnly && slots.any((s) => s.crossFades));
     final morphScale = !morphing || !changes || state.settled || state.crossFade
         ? 1.0
         : 1.0 +
             GlassNavPinnedMetrics.swellPulseAt(morphT) -
             GlassNavPinnedMetrics.squeezeScale * overshoot;
 
-    // With one side empty the shell holds the width it has: collapsing the
-    // width would leave a degenerate glass shape on the way out.
-    final widthT = fromItems.isEmpty
-        ? 1.0
-        : toItems.isEmpty
-            ? 0.0
-            : clampedT;
-
-    // Drives the materialize window for a group that only one route has. The
-    // side has already dropped groups whose phase is zero, so this is only
-    // ever a partial phase or a full one.
+    final empty =
+        widget.buds ? null : _emptyGroupTransition(context, state, from, to);
     final phase = widget.buds
         ? 1.0
-        : GlassNavPinnedHost.phaseFor(
-            context,
-            state,
-            inFrom: fromItems.isNotEmpty,
-            inTo: toItems.isNotEmpty,
-          );
+        : empty?.visibility ??
+            GlassNavPinnedHost.phaseFor(context, state,
+                inFrom: from != null, inTo: to != null);
+    final widthT = empty?.widthProgress ??
+        (fromItems.isEmpty
+            ? 1.0
+            : toItems.isEmpty
+                ? 0.0
+                : clampedT);
 
-    // Geometry for a side that does not exist comes from the side that does,
-    // so an entering or exiting group holds its shape rather than resizing.
+    // The absent side inherits thickness and radius, but has no content.
     final fromGroup = from ?? to!;
     final toGroup = to ?? from!;
 
@@ -2422,7 +2517,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
 
     // Cross-fade window for a matched item whose content changed, and
     // entering / exiting items during a morph.
-    final q = state.crossFade
+    final q = state.crossFade || contentOnly
         ? p.clamp(0.0, 1.0)
         : ((morphT - GlassNavPinnedMetrics.crossFadeStart) /
                 (GlassNavPinnedMetrics.crossFadeEnd -
@@ -2438,16 +2533,61 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // contents are not glass, so filtering them is safe — the shell itself
     // never animates opacity. Groups without a destination dissolve as a
     // unit instead, with no independent glyph blur.
-    final outSigma = state.settled || state.crossFade || noDestination
-        ? 0.0
-        : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
-    final inSigma = state.settled || state.crossFade || noDestination
-        ? 0.0
-        : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
+    final outSigma =
+        state.settled || state.crossFade || contentOnly || noDestination
+            ? 0.0
+            : GlassNavPinnedMetrics.outgoingSigmaAt(morphT);
+    final inSigma =
+        state.settled || state.crossFade || contentOnly || noDestination
+            ? 0.0
+            : GlassNavPinnedMetrics.incomingSigmaAt(morphT);
 
     // In the plain cross-fade or when dissolving without a destination,
     // glyphs fade with their group's glass.
     final fadesWithGroup = (state.crossFade || noDestination) && !morphing;
+
+    final handoffs = <int, ({double outgoing, double incoming})>{};
+    final transition = state.flowTo.headerMotion.foregroundTransition ??
+        state.flowFrom.headerMotion.foregroundTransition;
+    if (transition != null &&
+        !state.settled &&
+        !state.crossFade &&
+        state.transition != GlassEffectTransition.identity &&
+        !GlassAccessibilityData.of(context).reduceMotion &&
+        !MediaQuery.disableAnimationsOf(context)) {
+      for (var i = 0; i < slots.length; i++) {
+        final pair = slots[i];
+        if (!pair.crossFades ||
+            pair.fromItem!.background == GlassBarItemBackground.own ||
+            pair.toItem!.background == GlassBarItemBackground.own) {
+          continue;
+        }
+        final frame = transition(pair.fromItem!, pair.toItem!,
+            fromGroup.slotExtent, toGroup.slotExtent, clampedT);
+        if (frame != null) handoffs[i] = frame;
+      }
+    }
+
+    final pairedContents = <int, Widget>{};
+    if (!state.settled) {
+      final reduced = GlassAccessibilityData.of(context).reduceMotion ||
+          MediaQuery.disableAnimationsOf(context);
+      for (var i = 0; i < slots.length; i++) {
+        final pair = slots[i];
+        final from = pair.fromItem;
+        final to = pair.toItem;
+        if (from is GlassBarCustomItem &&
+            to is GlassBarCustomItem &&
+            from.pairedTransitionBuilder != null &&
+            to.pairedTransitionBuilder != null &&
+            from.background != GlassBarItemBackground.own &&
+            to.background != GlassBarItemBackground.own) {
+          final content = to.pairedTransitionBuilder!(
+              context, from.child, to.child, reduced ? (p >= .5 ? 1 : 0) : p);
+          if (content != null) pairedContents[i] = content;
+        }
+      }
+    }
 
     // An item whose content is itself glass cannot be faded or blurred from
     // outside: painted under an opacity or image-filter layer it has no
@@ -2465,6 +2605,62 @@ class _PinnedGroupState extends State<_PinnedGroup> {
       required GlassBarActionItem item,
       required Widget child,
     }) {
+      // For an empty endpoint the material scope owns the whole fade. Applying
+      // another foreground opacity or blur here would erase content before
+      // the container's width change can be seen.
+      if (empty != null) {
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: 1,
+          blurSigma: 0,
+          child: child,
+        );
+      }
+      final pair = slots[slot];
+      if (pairedContents.containsKey(slot)) {
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: isFrom ? 0 : 1,
+          blurSigma: 0,
+          child: child,
+        );
+      }
+      final handoff = handoffs[slot];
+      if (handoff != null) {
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: isFrom ? handoff.outgoing : handoff.incoming,
+          blurSigma: 0,
+          child: child,
+        );
+      }
+      GlassBarContentTransitionBuilder? builderOf(GlassBarActionItem? action) =>
+          action is GlassBarCustomItem ? action.transitionBuilder : null;
+      // Only like foregrounds opt into the replacement effect. A text/icon
+      // change keeps the standard foreground dissolve on both sides.
+      final transition =
+          builderOf(pair.fromItem) == null ? null : builderOf(pair.toItem);
+      if (!state.settled &&
+          pair.crossFades &&
+          transition != null &&
+          pair.fromItem?.background != GlassBarItemBackground.own &&
+          pair.toItem?.background != GlassBarItemBackground.own) {
+        final reduced = GlassAccessibilityData.of(context).reduceMotion ||
+            MediaQuery.disableAnimationsOf(context);
+        return _ClusterChild(
+          slot: slot,
+          isFrom: isFrom,
+          opacity: 1,
+          blurSigma: 0,
+          child: ClipRect(
+            child: transition(
+                context, child, reduced ? (p >= .5 ? 1 : 0) : p, !isFrom),
+          ),
+        );
+      }
       if (item.background != GlassBarItemBackground.own) {
         return _ClusterChild(
           slot: slot,
@@ -2487,6 +2683,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
       );
     }
 
+    final measureEndpoints = widget.titleMetrics != null && !state.settled;
     final children = <Widget>[];
     for (var i = 0; i < slots.length; i++) {
       final slot = slots[i];
@@ -2519,7 +2716,8 @@ class _PinnedGroupState extends State<_PinnedGroup> {
           // A bud is the same: its partner makes room for it from the start.
           final visible = state.settled
               ? !showsIncoming
-              : (morphing ||
+              : (measureEndpoints ||
+                  morphing ||
                   widget.buds ||
                   (fadesWithGroup ? phase > 0.0 : q < 1.0));
           if (visible) {
@@ -2542,7 +2740,11 @@ class _PinnedGroupState extends State<_PinnedGroup> {
               ),
             ));
           }
-        } else if (crossFades && (!state.settled ? q < 1.0 : !showsIncoming)) {
+        } else if (crossFades &&
+            (measureEndpoints ||
+                handoffs.containsKey(i) ||
+                pairedContents.containsKey(i) ||
+                (!state.settled ? q < 1.0 : !showsIncoming))) {
           // Cross-fading outgoing side.
           children.add(clusterChild(
             slot: i,
@@ -2572,7 +2774,8 @@ class _PinnedGroupState extends State<_PinnedGroup> {
           // A bud is the same: its partner makes room for it from the start.
           final visible = state.settled
               ? showsIncoming
-              : (morphing ||
+              : (measureEndpoints ||
+                  morphing ||
                   widget.buds ||
                   (fadesWithGroup ? phase > 0.0 : q > 0.0));
           if (visible) {
@@ -2597,7 +2800,11 @@ class _PinnedGroupState extends State<_PinnedGroup> {
               ),
             ));
           }
-        } else if (!crossFades || (!state.settled ? q > 0.0 : showsIncoming)) {
+        } else if (!crossFades ||
+            measureEndpoints ||
+            handoffs.containsKey(i) ||
+            pairedContents.containsKey(i) ||
+            (!state.settled ? q > 0.0 : showsIncoming)) {
           // Matched persistent item or cross-fading incoming side.
           children.add(clusterChild(
             slot: i,
@@ -2617,6 +2824,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
             item: toItem,
             child: _ClusterItem(
               item: toItem,
+              contentOverride: pairedContents[i],
               enabled: state.settled,
               slotExtent: toGroup.slotExtent,
               axis: toGroup.axis,
@@ -2632,6 +2840,7 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     if (children.isEmpty) return const SizedBox.shrink();
 
     final cluster = _PinnedCluster(
+      titleMetrics: widget.titleMetrics,
       orders: orders,
       widthT: widthT,
       positionT: clampedT,
@@ -2659,21 +2868,26 @@ class _PinnedGroupState extends State<_PinnedGroup> {
     // main axis needs walking back.
     final vertical = toGroup.axis == Axis.vertical;
     return GlassMaterializeEffect(
+      // Empty endpoints fade glass and content together, without the native
+      // profile's early glyph removal. Geometry supplies the visible motion.
       progress: phase,
       plain: state.crossFade,
       // The window this group traverses is the incoming one exactly when it is
       // the incoming route that has it; the profile follows from the same
       // fact, so a pop reverses both together.
-      profile: toItems.isNotEmpty
-          ? GlassMaterializeProfile.entrance
-          : GlassMaterializeProfile.exit,
+      profile: empty != null
+          ? GlassMaterializeProfile.uniform
+          : toItems.isNotEmpty
+              ? GlassMaterializeProfile.entrance
+              : GlassMaterializeProfile.exit,
       // It swells from the bar edge its cluster is pinned to.
       alignment: vertical
           ? Alignment.topCenter
           : widget.anchoredAtStart
               ? Alignment.centerLeft
               : Alignment.centerRight,
-      scaleFrom: GlassNavPinnedMetrics.materializeScaleFrom,
+      scaleFrom:
+          empty != null ? 1.0 : GlassNavPinnedMetrics.materializeScaleFrom,
       child: FractionalTranslation(
         translation: vertical
             ? Offset(0, -f)
@@ -2814,6 +3028,7 @@ class _OwnGlassDissolve extends StatelessWidget {
 class _ClusterItem extends StatelessWidget {
   const _ClusterItem({
     required this.item,
+    this.contentOverride,
     required this.enabled,
     required this.slotExtent,
     this.axis = Axis.horizontal,
@@ -2823,6 +3038,7 @@ class _ClusterItem extends StatelessWidget {
   });
 
   final GlassBarActionItem item;
+  final Widget? contentOverride;
   final bool enabled;
 
   /// Tint colour forwarded from [GlassBarActionItem.tintColor].
@@ -2864,7 +3080,11 @@ class _ClusterItem extends StatelessWidget {
       GlassBarIconItem(:final icon) => slot(icon),
       GlassBarMenuItem(:final icon) => slot(icon),
       GlassBarSheetItem(:final icon) => slot(icon),
-      GlassBarCustomItem(:final child) => child,
+      GlassBarCustomItem(:final child, :final extent) => extent == null
+          ? contentOverride ?? child
+          : axis == Axis.vertical
+              ? SizedBox(height: extent, child: contentOverride ?? child)
+              : SizedBox(width: extent, child: contentOverride ?? child),
     };
 
     content = IconTheme.merge(
@@ -2910,6 +3130,121 @@ class _ClusterItem extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: interactive ? onTap : null,
         child: content,
+      ),
+    );
+  }
+}
+
+// Filled by the existing control render objects during the same layout pass.
+// The title uses its endpoint's resting width, not the glass morph's width.
+class _TitleGroupMetrics {
+  double from = 0, to = 0;
+}
+
+class _TitleSideMetrics {
+  final groups = <_TitleGroupMetrics>[];
+
+  double width(bool incoming) {
+    final widths =
+        groups.map((g) => incoming ? g.to : g.from).where((w) => w > 0);
+    return widths.fold<double>(0, (sum, width) => sum + width) +
+        math.max(0, widths.length - 1) * GlassNavPinnedMetrics.groupGap;
+  }
+}
+
+/// Measures controls first, then pins the title to its selected endpoint.
+/// No estimates of text-action widths or frame-delayed size notifications.
+class _PinnedBarLayout extends MultiChildLayoutDelegate {
+  _PinnedBarLayout(
+      {required this.textDirection,
+      required this.metrics,
+      required this.spacing,
+      required this.incoming});
+  final EdgeInsetsDirectional spacing;
+  final TextDirection textDirection;
+  final Map<_BarSide, _TitleSideMetrics> metrics;
+  final bool incoming;
+
+  @override
+  void performLayout(Size size) {
+    final leading = layoutChild(_BarSide.leading, const BoxConstraints());
+    final trailing = layoutChild(_BarSide.trailing, const BoxConstraints());
+    final ltr = textDirection == TextDirection.ltr;
+    positionChild(
+        _BarSide.leading, Offset(ltr ? 0 : size.width - leading.width, 0));
+    positionChild(
+        _BarSide.trailing, Offset(ltr ? size.width - trailing.width : 0, 0));
+    final leadingWidth = metrics[_BarSide.leading]!.width(incoming);
+    final trailingWidth = metrics[_BarSide.trailing]!.width(incoming);
+    final start = leadingWidth + (leadingWidth > 0 ? spacing.start : 0);
+    final end = trailingWidth + (trailingWidth > 0 ? spacing.end : 0);
+    layoutChild(
+        #title,
+        BoxConstraints.tightFor(
+          width: math.max(0, size.width - start - end),
+          height: size.height,
+        ));
+    positionChild(#title, Offset(ltr ? start : end, 0));
+  }
+
+  @override
+  bool shouldRelayout(_PinnedBarLayout oldDelegate) =>
+      oldDelegate.textDirection != textDirection ||
+      oldDelegate.metrics != metrics ||
+      oldDelegate.incoming != incoming ||
+      oldDelegate.spacing != spacing;
+}
+
+/// The compact title owned by the navigation shell. Only one title is visible
+/// at a time; the fade-through is a pure function of the route progress, so
+/// reversing or cancelling a gesture retraces the same frames.
+class GlassNavPinnedTitle extends StatelessWidget {
+  /// Creates the compact title for the shell frame.
+  const GlassNavPinnedTitle({super.key, required this.state});
+
+  /// The shared navigation progress and route declarations.
+  final GlassNavPinnedState state;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state.presenting != null) return const SizedBox.shrink();
+    final from = state.flowFrom;
+    final to = state.flowTo;
+    final p = state.flowProgress;
+    final same = from.titleContentKey != null &&
+        from.titleContentKey == to.titleContentKey;
+    final incoming = state.settled || same || p >= .5;
+    final title = incoming ? to.title : from.title;
+    if (title == null) return const SizedBox.shrink();
+    final reduced = GlassAccessibilityData.of(context).reduceMotion ||
+        MediaQuery.disableAnimationsOf(context);
+    final transition = to.titleTransitionBuilder ?? from.titleTransitionBuilder;
+    final animate = !state.settled && !same && !reduced;
+    final opacity = transition != null || state.settled || same || reduced
+        ? 1.0
+        : (incoming ? (p - .5) * 2 : 1 - p * 2).clamp(0.0, 1.0);
+    return IgnorePointer(
+      ignoring: !state.settled,
+      child: ExcludeSemantics(
+        excluding: !state.settled,
+        child: Opacity(
+          opacity: opacity * (1 - state.coverage),
+          child: ClipRect(
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: SizedBox(
+                width: double.infinity,
+                child: DefaultTextStyle.merge(
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  child: transition != null && animate
+                      ? transition(context, title, p, incoming)
+                      : title,
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
