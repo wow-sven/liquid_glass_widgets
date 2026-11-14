@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, luma/stable]
   pull_request:
-    branches: [main]
+    branches: [main, luma/stable]
 
 # Cancel in-progress runs on the same branch to save CI minutes.
 concurrency:
