@@ -1,5 +1,6 @@
 # Fork changes on 1.17.3
 
+- Let rounded cards draw their own edge shadow during horizontal transitions built by `GlassPageRoute` and `GlassPageTransitionsBuilder`.
 - Keep the search pill anchored while its parent changes width, retain the editing connection across compact and expanded layouts, and include keyboard lift in accessory hit testing.
 - Match the Standard glass render path to the clip for rectangles with different top and bottom corner radii.
 - Support active nested navigation branches, route-driven pinned titles and controls, and modal presentation lifetimes. Header consumers can supply custom foreground and group transitions.
