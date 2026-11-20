@@ -60,6 +60,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('mixed transitions use adjacent headers through push and pop',
+      (tester) async {
+    final shell = GlobalKey<GlassNavigationShellState>();
+    final outer = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(MaterialApp(
+      navigatorKey: outer,
+      navigatorObservers: [GlassNavigationObserver()],
+      theme: ThemeData(platform: TargetPlatform.iOS),
+      builder: (_, child) => GlassNavigationShell(key: shell, child: child!),
+      home: _nested(GlobalKey<NavigatorState>(), const _Header('Kit')),
+    ));
+    await tester.pumpAndSettle();
+    outer.currentState!.push(PageRouteBuilder<void>(
+      opaque: false,
+      pageBuilder: (_, __, ___) => const _Header('Overview'),
+    ));
+    await tester.pumpAndSettle();
+    final calendar = _route(const _Header('Calendar'));
+    outer.currentState!.push(calendar);
+    for (final returning in [false, true]) {
+      if (returning) outer.currentState!.pop();
+      await tester.pump();
+      for (var frame = 0; frame < 8; frame++) {
+        await tester.pump(const Duration(milliseconds: 32));
+        final state = shell.currentState!.resolveState()!;
+        expect(state.from.titleContentKey, 'Overview');
+        expect(state.to.titleContentKey, 'Calendar');
+        expect(state.progress, closeTo(calendar.animation!.value, .001));
+      }
+      await tester.pumpAndSettle();
+    }
+    expect(shell.currentState!.resolveState()!.to.titleContentKey, 'Overview');
+  });
+
   testWidgets('ancestor back gesture cancellation retraces leaf titles',
       (tester) async {
     final shell = GlobalKey<GlassNavigationShellState>();

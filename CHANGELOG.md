@@ -1,5 +1,7 @@
 # Fork changes on 1.17.3
 
+- Add `GlassNavigationObserver` to keep pinned headers paired with adjacent routes when mixing custom and platform transitions.
+
 - Let rounded cards draw their own edge shadow during horizontal transitions built by `GlassPageRoute` and `GlassPageTransitionsBuilder`. Square pages retain Flutter's Cupertino edge shadow.
 - Keep the search pill anchored while its parent changes width, retain the editing connection across compact and expanded layouts, and include keyboard lift in accessory hit testing.
 - Match the Standard glass render path to the clip for rectangles with different top and bottom corner radii.

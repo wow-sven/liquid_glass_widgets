@@ -278,6 +278,41 @@ class _GlassBranchScope extends InheritedWidget {
       active != oldWidget.active || shell != oldWidget.shell;
 }
 
+/// Tracks the paint order of modal routes for [GlassNavigationShell].
+///
+/// Install in the Navigator's observers when mixing custom and platform page
+/// transitions. A popped route retains its place until its overlay has left.
+class GlassNavigationObserver extends NavigatorObserver {
+  // Routers can forward observations from a branch Navigator. Keep each stack
+  // with its actual Navigator, even when it shares an observer with the root.
+  static final _stacks = Expando<List<ModalRoute<dynamic>>>();
+
+  void _record(Route<dynamic> route, Route<dynamic>? below) {
+    final owner = route.navigator;
+    if (owner == null || route is! ModalRoute<dynamic>) return;
+    final stack = _stacks[owner] ??= [];
+    if (stack.contains(route)) return;
+    final index = below is ModalRoute<dynamic> ? stack.indexOf(below) : -1;
+    if (route.isCurrent) {
+      // A new top route also paints above routes still animating out.
+      stack.add(route);
+    } else {
+      stack.insert(index + 1, route);
+    }
+    route.completed.then<void>((_) => stack.remove(route));
+  }
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _record(route, previousRoute);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    if (newRoute != null) _record(newRoute, oldRoute);
+  }
+}
+
 /// Hosts navigation-bar glass chrome **above** the [Navigator], so it stays
 /// pinned while route content slides during a push or pop.
 ///
@@ -295,6 +330,7 @@ class _GlassBranchScope extends InheritedWidget {
 ///
 /// ```dart
 /// CupertinoApp(
+///   navigatorObservers: [GlassNavigationObserver()],
 ///   builder: (context, child) => GlassNavigationShell(child: child!),
 ///   home: const HomeScreen(),
 /// );
@@ -872,11 +908,17 @@ class GlassNavigationShellState extends State<GlassNavigationShell>
       // compare their unrelated route animation values with one another.
       final navigator = candidates.last.navigator;
       final routes = candidates.where((r) => r.navigator == navigator).toList();
-      final order = {for (var i = 0; i < routes.length; i++) routes[i]: i};
-      routes.sort((a, b) {
-        final coverage = _coverageOf(a).compareTo(_coverageOf(b));
-        return coverage != 0 ? coverage : order[b]!.compareTo(order[a]!);
-      });
+      final stack =
+          navigator == null ? null : GlassNavigationObserver._stacks[navigator];
+      if (stack != null && routes.every(stack.contains)) {
+        routes.sort((a, b) => stack.indexOf(b).compareTo(stack.indexOf(a)));
+      } else {
+        final order = {for (var i = 0; i < routes.length; i++) routes[i]: i};
+        routes.sort((a, b) {
+          final coverage = _coverageOf(a).compareTo(_coverageOf(b));
+          return coverage != 0 ? coverage : order[b]!.compareTo(order[a]!);
+        });
+      }
       final top = routes.first;
       final below = routes.length > 1 ? routes[1] : null;
       final nested = resolve(top);
